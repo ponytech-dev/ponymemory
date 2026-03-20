@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+venv/
+venv-cognee/
+.venv/
+logs/
+*.log

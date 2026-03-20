@@ -1,0 +1,1 @@
+../scripts/qdrant-mcp-server.py

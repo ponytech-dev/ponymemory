@@ -199,8 +199,34 @@ Claude Code Session
 | obsidian | npx mcp-remote | localhost:22360 | Obsidian 需运行 |
 
 **已移除**：
+- ~~Neo4j~~ → 2026-03-19 第一性原理分析结论：冗余。Qdrant entity_names + 语义搜索覆盖 95% 场景。科研图谱由 Obsidian wikilinks + 领域 MCP（ChEMBL/PubChem）替代
 - ~~mem0~~ → Claude Code 替代其 LLM 层，直接操作 Qdrant
-- ~~cognee~~ → 已移除，图谱功能不再使用
+- ~~cognee~~ → 已移除
+
+## 四-B、可视化数据供应
+
+PonyMemory 为可视化前端提供数据，但不负责渲染：
+
+```
+PonyMemory（数据生产）          →  galaxy-data.json  →  可视化消费者
+├── L1: CLAUDE.md 规则解析                              ├── PonyWriterX Knowledge Galaxy
+├── L2: memory/*.md 偏好解析                             ├── PonyMemory Brain Atlas（GitHub Pages）
+├── L3: Qdrant session_memories                          └── 未来其他仪表盘
+├── L4: Obsidian vault 文件扫描
+└── L5: Qdrant papers/notes/documents
+```
+
+**generate_galaxy_data.py** 位于 `~/pony/ponywriterX/apps/skill/galaxy/`，仅依赖 Python 标准库 + Qdrant HTTP API。
+
+### 与 PonyWriterX 的职责边界
+
+| 职责 | 归属 |
+|------|------|
+| 五层记忆的采集/存储/检索/维护 | **PonyMemory** |
+| 从五层提取数据生成 JSON | **PonyMemory**（generate_galaxy_data.py） |
+| 3D 大脑 + 星空的 WebGL 渲染 | **PonyWriterX** Knowledge Galaxy |
+| Brain Atlas 映射（区域/颜色/隐喻） | **PonyMemory** 定义，PonyWriterX 实现 |
+| 用户交互（点击/搜索/高亮） | **PonyWriterX** Knowledge Galaxy |
 
 ## 五、维护机制
 
@@ -232,8 +258,9 @@ Claude Code Session
 
 ## 七、依赖服务
 
-| 服务 | 地址 | 用途 |
-|------|------|------|
-| Qdrant | localhost:6333 | 向量数据库（Docker） |
-| BGE-M3 Embedding | localhost:8999 | 向量化（Flask + /embed） |
-| Obsidian | localhost:22360 | 笔记系统 MCP |
+| 服务 | 地址 | 用途 | 必需？ |
+|------|------|------|--------|
+| Qdrant | localhost:6333 | 向量数据库（Docker） | ✅ L3/L5 核心 |
+| BGE-M3 Embedding | localhost:8999 | 向量化（Flask + /embed） | ✅ 向量化 |
+| Obsidian | localhost:22360 | 笔记系统 MCP | ⚠️ L4 需要 |
+| ~~Neo4j~~ | ~~localhost:7687~~ | ~~图遍历~~ | ❌ 已移除 |

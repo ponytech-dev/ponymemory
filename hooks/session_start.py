@@ -11,20 +11,13 @@ PonyMemory SessionStart Hook
 import json
 import os
 import sys
-import subprocess
 import urllib.request
 import urllib.error
 
-
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_URL = os.environ.get("EMBED_URL", "http://localhost:8999")
-PONYWRITERX_LOCK = os.path.expanduser("~/.ponywriterx/.active_session")
-
-
-def is_ponywriterx_active():
-    """PonyWriterX Skill 运行中时，PonyMemory hooks 让位"""
-    return os.path.isfile(PONYWRITERX_LOCK)
 MEMORY_COLLECTION = "session_memories"
+MAX_CONTEXT_CHARS = 8000
 
 
 def get_project_name():
@@ -42,17 +35,19 @@ def get_project_name():
 def embed_text(text):
     """通过本地 BGE-M3 服务获取向量"""
     try:
-        payload = json.dumps({"text": text}).encode("utf-8")
+        payload = json.dumps({"texts": [text]}).encode("utf-8")
         req = urllib.request.Request(
             f"{EMBED_URL}/embed",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=4) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-            return result.get("embedding") or result.get("vector")
-    except Exception:
+            embeddings = result.get("embeddings", [])
+            return embeddings[0] if embeddings else None
+    except Exception as e:
+        print(f"[PonyMemory] embed_text failed: {e}", file=sys.stderr)
         return None
 
 
@@ -64,12 +59,11 @@ def search_qdrant_memories(project_name):
         return []
 
     try:
-        # 搜索 session_memories 集合
         payload = json.dumps({
             "vector": vector,
             "limit": 10,
             "with_payload": True,
-            "filter": None,  # 不限制项目，拿到全局记忆
+            "filter": None,
         }).encode("utf-8")
 
         req = urllib.request.Request(
@@ -78,24 +72,25 @@ def search_qdrant_memories(project_name):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=4) as resp:
             result = json.loads(resp.read().decode("utf-8"))
             points = result.get("result", [])
 
         memories = []
         for p in points:
-            payload = p.get("payload", {})
+            pl = p.get("payload", {})
             score = p.get("score", 0)
             if score < 0.3:
                 continue
-            text = payload.get("text", "")
-            mtype = payload.get("memory_type", "unknown")
-            project = payload.get("project", "")
-            ts = payload.get("timestamp", "")[:10]
+            text = pl.get("text", "")
+            mtype = pl.get("memory_type", "unknown")
+            project = pl.get("project", "")
+            ts = str(pl.get("timestamp", ""))[:10]
             memories.append(f"- [{mtype}] {text} (project={project}, date={ts}, score={score:.2f})")
 
         return memories
-    except Exception:
+    except Exception as e:
+        print(f"[PonyMemory] Qdrant search failed: {e}", file=sys.stderr)
         return []
 
 
@@ -104,20 +99,25 @@ def read_obsidian_project(project_name):
     vault = os.path.expanduser("~/pony/obsidian-vault/")
     context_parts = []
 
-    # 尝试多种项目名格式
-    candidates = [project_name, project_name.capitalize(), "PonyWriterX", "PonylabASMS", "SpaFlow"]
+    candidates = [project_name, project_name.capitalize()]
     for name in candidates:
         project_file = os.path.join(vault, f"01-Projects/{name}/_project.md")
         if os.path.isfile(project_file):
-            with open(project_file) as f:
-                context_parts.append(f"## 项目状态（{name}）\n{f.read()[:1000]}")
+            try:
+                with open(project_file, encoding="utf-8") as f:
+                    context_parts.append(f"## 项目状态（{name}）\n{f.read()[:1000]}")
+            except Exception as e:
+                print(f"[PonyMemory] read _project.md failed: {e}", file=sys.stderr)
             # decisions
             decisions_file = os.path.join(vault, f"01-Projects/{name}/decisions.md")
             if os.path.isfile(decisions_file):
-                with open(decisions_file) as f:
-                    content = f.read()
-                    if len(content) > 200:
-                        context_parts.append(f"## 最近决策（{name}）\n{content[-800:]}")
+                try:
+                    with open(decisions_file, encoding="utf-8") as f:
+                        content = f.read()
+                        if len(content) > 200:
+                            context_parts.append(f"## 最近决策（{name}）\n{content[-800:]}")
+                except Exception as e:
+                    print(f"[PonyMemory] read decisions.md failed: {e}", file=sys.stderr)
             break
 
     return "\n\n".join(context_parts)
@@ -128,8 +128,11 @@ def read_handoff():
     cwd = os.environ.get("CWD", os.getcwd())
     handoff = os.path.join(cwd, "HANDOFF.md")
     if os.path.isfile(handoff):
-        with open(handoff) as f:
-            return f"## HANDOFF（进行中任务）\n{f.read()[:1000]}"
+        try:
+            with open(handoff, encoding="utf-8") as f:
+                return f"## HANDOFF（进行中任务）\n{f.read()[:1000]}"
+        except Exception as e:
+            print(f"[PonyMemory] read HANDOFF.md failed: {e}", file=sys.stderr)
     return ""
 
 
@@ -137,10 +140,13 @@ def read_pending_rules():
     """读取待确认的规则"""
     pending = os.path.expanduser("~/pony/ponymemory/pending_rules.md")
     if os.path.isfile(pending):
-        with open(pending) as f:
-            content = f.read().strip()
-            if content:
-                return f"## 待确认规则\n{content}"
+        try:
+            with open(pending, encoding="utf-8") as f:
+                content = f.read().strip()[:500]
+                if content:
+                    return f"## 待确认规则\n{content}"
+        except Exception as e:
+            print(f"[PonyMemory] read pending_rules.md failed: {e}", file=sys.stderr)
     return ""
 
 
@@ -158,10 +164,13 @@ def read_domain_rules(project_name):
     if domain:
         rules_file = os.path.join(vault, domain, "learned_rules.md")
         if os.path.isfile(rules_file):
-            with open(rules_file) as f:
-                content = f.read()
-                if len(content) > 50:
-                    return f"## 领域经验规则（{domain}）\n{content[:800]}"
+            try:
+                with open(rules_file, encoding="utf-8") as f:
+                    content = f.read()
+                    if len(content) > 50:
+                        return f"## 领域经验规则（{domain}）\n{content[:800]}"
+            except Exception as e:
+                print(f"[PonyMemory] read domain rules failed: {e}", file=sys.stderr)
     return ""
 
 
@@ -175,14 +184,13 @@ def read_active_ponywriterx_project():
         if not f.endswith(".json"):
             continue
         try:
-            with open(os.path.join(projects_dir, f)) as fh:
+            with open(os.path.join(projects_dir, f), encoding="utf-8") as fh:
                 proj = json.load(fh)
                 if proj.get("status") == "ACTIVE":
                     pid = proj.get("id", f)
                     title = proj.get("title", "Unknown")
                     path = proj.get("path", "?")
                     mode = proj.get("collaboration_mode", "standard")
-                    # Find current stage
                     current_stage = "INTAKE"
                     for s in proj.get("stages", []):
                         if s.get("status") == "APPROVED":
@@ -195,17 +203,12 @@ def read_active_ponywriterx_project():
                         f"- 模式: {mode}\n"
                         f"- 最后完成阶段: {current_stage}\n"
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[PonyMemory] read PonyWriterX project {f} failed: {e}", file=sys.stderr)
     return ""
 
 
 def main():
-    # PonyWriterX Skill 运行中 → 让 PonyWriterX 自己的 hooks 接管
-    if is_ponywriterx_active():
-        print(json.dumps({}))
-        return
-
     project_name = get_project_name()
     context_sections = []
 
@@ -244,6 +247,9 @@ def main():
     additional_context = "\n\n---\n\n".join(context_sections) if context_sections else ""
 
     if additional_context:
+        # 大小保护：截断到 MAX_CONTEXT_CHARS
+        if len(additional_context) > MAX_CONTEXT_CHARS:
+            additional_context = additional_context[:MAX_CONTEXT_CHARS] + "\n\n[... 截断，超出 8000 字符上限]"
         additional_context = (
             f"# PonyMemory 自动注入（项目：{project_name}）\n\n"
             + additional_context
@@ -255,8 +261,12 @@ def main():
     if additional_context:
         output["additionalContext"] = additional_context
 
-    print(json.dumps(output))
+    print(json.dumps(output, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"[PonyMemory] session_start fatal: {e}", file=sys.stderr)
+        print(json.dumps({}))

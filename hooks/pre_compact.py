@@ -6,14 +6,7 @@ PonyMemory PreCompact Hook
 """
 import json
 import os
-from datetime import datetime
-
-
-PONYWRITERX_LOCK = os.path.expanduser("~/.ponywriterx/.active_session")
-
-
-def is_ponywriterx_active():
-    return os.path.isfile(PONYWRITERX_LOCK)
+import sys
 
 
 def get_project_name():
@@ -31,8 +24,11 @@ def read_handoff():
     cwd = os.environ.get("CWD", os.getcwd())
     handoff = os.path.join(cwd, "HANDOFF.md")
     if os.path.isfile(handoff):
-        with open(handoff) as f:
-            return f.read()[:1000]
+        try:
+            with open(handoff, encoding="utf-8") as f:
+                return f.read()[:1000]
+        except Exception as e:
+            print(f"[PonyMemory] read HANDOFF.md failed: {e}", file=sys.stderr)
     return ""
 
 
@@ -45,7 +41,7 @@ def find_active_ponywriterx():
         if not f.endswith(".json"):
             continue
         try:
-            with open(os.path.join(projects_dir, f)) as fh:
+            with open(os.path.join(projects_dir, f), encoding="utf-8") as fh:
                 proj = json.load(fh)
                 if proj.get("status") == "ACTIVE":
                     pid = proj.get("id", "")
@@ -53,21 +49,16 @@ def find_active_ponywriterx():
                     if os.path.isfile(nav):
                         return f"Navigator 文件存在：{nav}（压缩后可从此文件恢复上下文）"
                     return f"活跃项目 {pid}，无 navigator.json（如已过 OUTLINE_REVIEW，应生成）"
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[PonyMemory] read PonyWriterX project {f} failed: {e}", file=sys.stderr)
     return ""
 
 
 def main():
-    if is_ponywriterx_active():
-        print(json.dumps({}))
-        return
-
     project_name = get_project_name()
-    today = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     context_parts = [
-        "# ⚠️ PonyMemory PreCompact — 压缩前紧急保存（硬规则）",
+        "# PonyMemory PreCompact — 压缩前紧急保存（硬规则）",
         "",
         "**Context 即将被压缩。你必须在压缩前完成以下操作，否则信息将永久丢失。**",
         "",
@@ -101,8 +92,12 @@ def main():
         context_parts.append(f"## PonyWriterX\n{pwx_nav}")
 
     output = {"additionalContext": "\n".join(context_parts)}
-    print(json.dumps(output))
+    print(json.dumps(output, ensure_ascii=False))
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        print(f"[PonyMemory] pre_compact fatal: {e}", file=sys.stderr)
+        print(json.dumps({}))

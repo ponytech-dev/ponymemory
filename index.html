@@ -1,0 +1,1312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PonyWriterX — Knowledge Galaxy</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;font-family:'SF Mono','Consolas',monospace;color:#ccc}
+canvas{display:block;position:fixed;top:0;left:0}
+#title{position:fixed;top:24px;left:32px;z-index:10}
+#title h1{font-size:16px;letter-spacing:3px;color:#fff;text-shadow:0 0 30px rgba(100,160,255,0.4)}
+#title p{font-size:10px;color:rgba(255,255,255,0.3);margin-top:4px;letter-spacing:1px}
+#badge{position:fixed;top:24px;right:32px;z-index:10;font-size:10px;padding:6px 16px;border:1px solid rgba(255,255,255,0.12);border-radius:20px;color:rgba(255,255,255,0.4);letter-spacing:1px}
+#search-bar{position:fixed;top:24px;left:50%;transform:translateX(-50%);z-index:10;display:flex;align-items:center;gap:8px}
+#search-input{background:rgba(8,10,18,0.85);border:1px solid rgba(255,255,255,0.1);border-radius:20px;color:rgba(255,255,255,0.7);font-family:inherit;font-size:10px;padding:6px 16px;outline:none;width:260px;letter-spacing:0.5px;transition:all 0.3s}
+#search-input::placeholder{color:rgba(255,255,255,0.2)}
+#search-input:focus{border-color:rgba(100,160,255,0.4);color:#fff;box-shadow:0 0 20px rgba(100,160,255,0.08)}
+#search-clear{background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:14px;padding:0 4px;display:none}
+#legend{position:fixed;left:32px;bottom:32px;z-index:10}
+.litem{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:11px;color:rgba(255,255,255,0.35);cursor:pointer;padding:6px 10px;border-radius:8px;transition:all 0.3s}
+.litem:hover,.litem.active{color:#fff;background:rgba(255,255,255,0.05)}
+.ldot{width:10px;height:10px;border-radius:50%;box-shadow:0 0 10px currentColor}
+#stats{position:fixed;left:32px;top:80px;z-index:10;font-size:10px;color:rgba(255,255,255,0.2);line-height:2}
+#stats span{color:rgba(120,180,255,0.5)}
+#panel{position:fixed;left:32px;bottom:220px;width:280px;z-index:10;background:rgba(8,10,18,0.92);border:1px solid rgba(255,255,255,0.06);border-radius:14px;padding:18px 20px;backdrop-filter:blur(30px);opacity:0;pointer-events:none;transition:all 0.4s;max-height:40vh;overflow-y:auto}
+#panel.show{opacity:1;pointer-events:auto}
+#panel h2{font-size:13px;font-weight:600;letter-spacing:1px;margin-bottom:2px}
+#panel .sub{font-size:10px;color:rgba(255,255,255,0.3);margin-bottom:14px}
+#panel .desc{font-size:11px;line-height:1.8;color:rgba(255,255,255,0.6)}
+#panel .mems{margin-top:16px;border-top:1px solid rgba(255,255,255,0.06);padding-top:14px}
+#panel .mems h3{font-size:9px;letter-spacing:1px;color:rgba(255,255,255,0.25);margin-bottom:8px}
+#panel .mi{font-size:11px;padding:8px 12px;margin-bottom:6px;background:rgba(255,255,255,0.02);border-radius:8px;border-left:2px solid;line-height:1.6;color:rgba(255,255,255,0.55)}
+#panel-close{position:absolute;top:16px;right:16px;background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;font-family:inherit;line-height:1}
+#panel-close:hover{color:#fff}
+#paper-panel{position:fixed;right:32px;bottom:32px;width:300px;z-index:11;background:rgba(5,7,16,0.95);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:20px 22px;backdrop-filter:blur(30px);opacity:0;pointer-events:none;transition:all 0.4s}
+#paper-panel.show{opacity:1;pointer-events:auto}
+#paper-panel .pp-tier{font-size:9px;letter-spacing:1px;margin-bottom:6px}
+#paper-panel .pp-title{font-size:12px;font-weight:600;line-height:1.5;color:#fff;margin-bottom:10px}
+#paper-panel .pp-journal{font-size:10px;color:rgba(255,255,255,0.4);margin-bottom:14px}
+#paper-panel .pp-stats{display:flex;gap:12px;margin-bottom:14px}
+#paper-panel .pp-stat{font-size:10px;color:rgba(255,255,255,0.35)}
+#paper-panel .pp-stat span{color:rgba(120,200,255,0.7);display:block;font-size:12px;margin-bottom:2px}
+#paper-panel .pp-doi{font-size:9px;color:rgba(255,255,255,0.2);word-break:break-all;border-top:1px solid rgba(255,255,255,0.05);padding-top:12px;margin-top:4px}
+#paper-panel .pp-doi a{color:rgba(100,160,255,0.6);text-decoration:none}
+#paper-panel .pp-doi a:hover{color:rgba(100,160,255,1)}
+#paper-close{position:absolute;top:16px;right:16px;background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;font-family:inherit;line-height:1}
+#paper-close:hover{color:#fff}
+#node-detail-panel{position:fixed;right:32px;bottom:32px;width:300px;z-index:12;background:rgba(5,7,16,0.96);border:1px solid rgba(255,255,255,0.08);border-radius:14px;padding:20px 22px;backdrop-filter:blur(30px);opacity:0;pointer-events:none;transition:all 0.4s;max-height:40vh;overflow-y:auto}
+#node-detail-panel.show{opacity:1;pointer-events:auto}
+#node-detail-panel h2{font-size:12px;font-weight:600;letter-spacing:1px;color:#fff;margin-bottom:4px;line-height:1.5}
+#node-detail-panel .nd-layer{font-size:9px;letter-spacing:1px;margin-bottom:12px}
+#node-detail-panel .nd-fulltext{font-size:11px;line-height:1.8;color:rgba(255,255,255,0.6);margin-bottom:12px;padding:10px;background:rgba(255,255,255,0.02);border-radius:8px}
+#node-detail-panel .nd-meta{font-size:10px;color:rgba(255,255,255,0.3);line-height:2}
+#node-detail-panel .nd-meta strong{color:rgba(255,255,255,0.5)}
+#node-detail-close{position:absolute;top:16px;right:16px;background:none;border:none;color:rgba(255,255,255,0.3);cursor:pointer;font-size:16px;font-family:inherit;line-height:1}
+#node-detail-close:hover{color:#fff}
+#node-tip{position:fixed;z-index:30;background:rgba(5,5,15,0.92);border:1px solid rgba(255,255,255,0.12);border-radius:12px;padding:12px 16px;max-width:240px;pointer-events:none;display:none;backdrop-filter:blur(15px)}
+.nt-name{font-size:12px;font-weight:600;color:#fff;margin-bottom:4px}
+.nt-layer{font-size:9px;letter-spacing:1px;margin-bottom:8px}
+.nt-desc{font-size:11px;line-height:1.6;color:rgba(255,255,255,0.5)}
+#paper-tip{position:fixed;z-index:30;background:rgba(3,6,20,0.94);border:1px solid rgba(100,160,255,0.15);border-radius:12px;padding:12px 16px;max-width:260px;pointer-events:none;display:none;backdrop-filter:blur(15px)}
+.pt-title{font-size:11px;font-weight:600;color:#fff;margin-bottom:5px;line-height:1.4}
+.pt-meta{font-size:9px;color:rgba(255,255,255,0.35);letter-spacing:0.5px}
+.pt-tier{font-size:9px;letter-spacing:1px;margin-top:4px}
+#hint{position:fixed;bottom:28px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(255,255,255,0.15);letter-spacing:1px;z-index:10;animation:pulse 3s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:0.15}50%{opacity:0.4}}
+#search-count{position:fixed;bottom:52px;left:50%;transform:translateX(-50%);font-size:10px;color:rgba(100,180,255,0.5);letter-spacing:1px;z-index:10;display:none}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="title"><h1>PONYWRITERX</h1><p>KNOWLEDGE GALAXY</p></div>
+<div id="badge">5-LAYER MEMORY ARCHITECTURE</div>
+
+<div id="search-bar">
+  <input id="search-input" type="text" placeholder="SEARCH PAPERS BY TITLE OR FILE..." autocomplete="off">
+  <button id="search-clear">✕</button>
+</div>
+
+<div id="stats">
+  <div>PARTICLES <span id="s-p">0</span></div>
+  <div>NODES <span id="s-nodes">0</span></div>
+  <div>PAPERS <span id="s-l5">—</span></div>
+  <div>FPS <span id="s-fps">60</span></div>
+</div>
+
+<div id="legend"></div>
+
+<div id="panel">
+  <button id="panel-close" onclick="closePanel()">✕</button>
+  <h2 id="p-name"></h2>
+  <div class="sub" id="p-brain"></div>
+  <div class="desc" id="p-desc"></div>
+  <div class="mems"><h3>MEMORY SAMPLES</h3><div id="p-mems"></div></div>
+</div>
+
+<div id="paper-panel">
+  <button id="paper-close" onclick="closePaperPanel()">✕</button>
+  <div class="pp-tier" id="pp-tier"></div>
+  <div class="pp-title" id="pp-title"></div>
+  <div class="pp-journal" id="pp-journal"></div>
+  <div class="pp-stats">
+    <div class="pp-stat"><span id="pp-collection">—</span>COLLECTION</div>
+    <div class="pp-stat"><span id="pp-layer">L5</span>LAYER</div>
+  </div>
+  <div class="pp-doi" id="pp-doi"></div>
+</div>
+
+<div id="node-detail-panel">
+  <button id="node-detail-close" onclick="closeNodeDetailPanel()">✕</button>
+  <h2 id="nd-name"></h2>
+  <div class="nd-layer" id="nd-layer"></div>
+  <div class="nd-fulltext" id="nd-fulltext"></div>
+  <div class="nd-meta" id="nd-meta"></div>
+</div>
+
+<div id="node-tip">
+  <div class="nt-name" id="nt-name"></div>
+  <div class="nt-layer" id="nt-layer"></div>
+  <div class="nt-desc" id="nt-desc"></div>
+</div>
+
+<div id="paper-tip">
+  <div class="pt-title" id="pt-title"></div>
+  <div class="pt-meta" id="pt-meta"></div>
+  <div class="pt-tier" id="pt-tier"></div>
+</div>
+
+<div id="search-count"></div>
+<div id="hint">CLICK LAYER NODE · CLICK PAPER STAR · DRAG TO ROTATE · SCROLL TO ZOOM</div>
+
+<script type="module">
+import * as THREE from 'https://esm.sh/three@0.170.0';
+import { OrbitControls } from 'https://esm.sh/three@0.170.0/examples/jsm/controls/OrbitControls.js';
+
+// ══════════════════════════════════════════════════════════════
+// Configuration
+// ══════════════════════════════════════════════════════════════
+const PARTICLE_COUNT = 45000;
+const BRAIN_SCALE = 2.8;
+
+// Fill ratio expected maxima per layer (used for brightness modulation)
+const FILL_MAX = [500, 100, 200, 100, 500];
+
+// ══════════════════════════════════════════════════════════════
+// Region Definitions — 5-layer memory system
+// ══════════════════════════════════════════════════════════════
+const REGIONS = [
+  {
+    id: 0, name: 'L1 · Behavioral Rules', brain: 'PREFRONTAL CORTEX',
+    color: [0.0, 0.55, 0.75], hex: '#00bcd4',
+    desc: 'Hard constraints that govern every action (CLAUDE.md). Language policy, security rules, validation gates, project-specific constraints. Auto-loaded, non-bypassable.',
+  },
+  {
+    id: 1, name: 'L2 · User Preferences', brain: 'HIPPOCAMPUS',
+    color: [0.72, 0.45, 0.0], hex: '#ff9800',
+    desc: 'Personal habits and feedback accumulated over time (MEMORY.md). Communication style, workflow patterns, correction history, quick references. Lightweight, high-frequency.',
+  },
+  {
+    id: 2, name: 'L3 · AI Memory', brain: 'NEOCORTEX',
+    color: [0.15, 0.48, 0.85], hex: '#42a5f5',
+    desc: 'Facts and decisions extracted from conversations (Qdrant). Short statements the AI remembers: corrections, milestones, technical choices. Semantic search, auto-dedup.',
+  },
+  {
+    id: 3, name: 'L4 · Structured Archive', brain: 'TEMPORAL LOBE',
+    color: [0.6, 0.18, 0.75], hex: '#ab47bc',
+    desc: 'Human-readable project documentation (Obsidian). Full decision reports, iteration logs, research findings, project status overviews. Wikilink-connected, permanently browsable.',
+  },
+  {
+    id: 4, name: 'L5 · Knowledge Retrieval', brain: 'POSTERIOR PARIETAL CORTEX',
+    color: [0.0, 0.6, 0.5], hex: '#26a69a',
+    desc: 'External knowledge indexed for retrieval (Qdrant RAG). Paper full-texts, research notes, documents — chunked, embedded, searched per-section during writing.',
+  }
+];
+
+// L5 collection → color
+const COLLECTION_COLORS = {
+  papers:              [0.31, 0.76, 0.97],  // #4fc3f7
+  notes:               [1.0,  0.72, 0.3],   // #ffb74d
+  documents:           [0.51, 0.78, 0.52],  // #81c784
+  ponywriterx_materials:[0.81, 0.58, 0.85], // #ce93d8
+};
+const COLLECTION_SIZE = { papers: 1.4, notes: 1.1, documents: 1.0, ponywriterx_materials: 1.2 };
+
+// ══════════════════════════════════════════════════════════════
+// Runtime data (populated after fetch)
+// ══════════════════════════════════════════════════════════════
+let GALAXY_LAYERS   = [];   // from galaxy-data.json layers[]
+let GALAXY_NODES    = [];   // from galaxy-data.json nodes[]
+let GALAXY_STATS    = {};   // from galaxy-data.json stats
+
+// Nodes that become interactive memory nodes inside the brain (L1-L4)
+let DISPLAY_MEM_NODES = [];   // {layer, name, full_text, source_file, category, memory_type, project, path, _origNode}
+// Category nodes (5 — one per layer)
+let CATEGORY_NODES = [];      // {region, name, desc}
+
+// Legend UI (declared early so buildLegend() can be called before data loads)
+const legendEl = document.getElementById('legend');
+let activeRegion = -1;
+
+// ══════════════════════════════════════════════════════════════
+// Simplex 3D Noise GLSL (Ashima Arts / Stefan Gustavson)
+// ══════════════════════════════════════════════════════════════
+const NOISE_GLSL = `
+vec4 mod289(vec4 x){return x-floor(x*(1./289.))*289.;}
+vec3 mod289(vec3 x){return x-floor(x*(1./289.))*289.;}
+vec4 permute(vec4 x){return mod289(((x*34.)+10.)*x);}
+vec4 taylorInvSqrt(vec4 r){return 1.79284291400159-.85373472095314*r;}
+float snoise(vec3 v){
+  const vec2 C=vec2(1./6.,1./3.);
+  const vec4 D=vec4(0.,.5,1.,2.);
+  vec3 i=floor(v+dot(v,C.yyy));
+  vec3 x0=v-i+dot(i,C.xxx);
+  vec3 g=step(x0.yzx,x0.xyz);
+  vec3 l=1.-g;
+  vec3 i1=min(g.xyz,l.zxy);
+  vec3 i2=max(g.xyz,l.zxy);
+  vec3 x1=x0-i1+C.xxx;
+  vec3 x2=x0-i2+C.yyy;
+  vec3 x3=x0-D.yyy;
+  i=mod289(i);
+  vec4 p=permute(permute(permute(
+    i.z+vec4(0.,i1.z,i2.z,1.))
+    +i.y+vec4(0.,i1.y,i2.y,1.))
+    +i.x+vec4(0.,i1.x,i2.x,1.));
+  float n_=.142857142857;
+  vec3 ns=n_*D.wyz-D.xzx;
+  vec4 j=p-49.*floor(p*ns.z*ns.z);
+  vec4 x_=floor(j*ns.z);
+  vec4 y_=floor(j-7.*x_);
+  vec4 x=x_*ns.x+ns.yyyy;
+  vec4 y=y_*ns.x+ns.yyyy;
+  vec4 h=1.-abs(x)-abs(y);
+  vec4 b0=vec4(x.xy,y.xy);
+  vec4 b1=vec4(x.zw,y.zw);
+  vec4 s0=floor(b0)*2.+1.;
+  vec4 s1=floor(b1)*2.+1.;
+  vec4 sh=-step(h,vec4(0.));
+  vec4 a0=b0.xzyw+s0.xzyw*sh.xxyy;
+  vec4 a1=b1.xzyw+s1.xzyw*sh.zzww;
+  vec3 p0=vec3(a0.xy,h.x);
+  vec3 p1=vec3(a0.zw,h.y);
+  vec3 p2=vec3(a1.xy,h.z);
+  vec3 p3=vec3(a1.zw,h.w);
+  vec4 norm=taylorInvSqrt(vec4(dot(p0,p0),dot(p1,p1),dot(p2,p2),dot(p3,p3)));
+  p0*=norm.x;p1*=norm.y;p2*=norm.z;p3*=norm.w;
+  vec4 m=max(.5-vec4(dot(x0,x0),dot(x1,x1),dot(x2,x2),dot(x3,x3)),0.);
+  m=m*m;
+  return 105.*dot(m*m,vec4(dot(p0,x0),dot(p1,x1),dot(p2,x2),dot(p3,x3)));
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Shader: Brain Cloud Particles (with uFillRatios for brightness)
+// ══════════════════════════════════════════════════════════════
+const cloudVS = `
+${NOISE_GLSL}
+uniform float uTime;
+uniform float uSize;
+uniform vec3 uMouse3D;
+uniform float uMouseActive;
+uniform float uActiveRegion;
+uniform float uFillRatios[5];
+attribute float aRandom;
+attribute float aRegion;
+attribute vec3 aColor;
+attribute float aSurface;
+varying float vAlpha;
+varying vec3 vColor;
+void main() {
+    vec3 pos = position;
+    float t = uTime * 0.05;
+    float n1 = snoise(vec3(pos.x*0.35+t, pos.y*0.35, pos.z*0.35));
+    float n2 = snoise(vec3(pos.x*0.35, pos.y*0.35+t, pos.z*0.35+50.));
+    float n3 = snoise(vec3(pos.x*0.35+100., pos.y*0.35, pos.z*0.35+t));
+    float breathe = sin(uTime*0.25 + length(pos)*0.3) * 0.02;
+    pos += vec3(n1,n2,n3)*0.13 + breathe;
+    if (uMouseActive > 0.5) {
+        vec3 toM = pos - uMouse3D;
+        float d = length(toM);
+        pos += normalize(toM+0.001) * pow(1.-clamp(d/2.5,0.,1.),5.) * 0.8;
+    }
+    // Per-region fill ratio brightness modulation
+    int ri = int(aRegion + 0.5);
+    float fillRatio = 0.5;
+    if (ri == 0) fillRatio = uFillRatios[0];
+    else if (ri == 1) fillRatio = uFillRatios[1];
+    else if (ri == 2) fillRatio = uFillRatios[2];
+    else if (ri == 3) fillRatio = uFillRatios[3];
+    else if (ri == 4) fillRatio = uFillRatios[4];
+    float fillBright = 0.4 + fillRatio * 0.6;  // dim regions look sparse
+    float rMatch = step(abs(aRegion - uActiveRegion), 0.1);
+    float rDim = uActiveRegion >= 0. ? mix(0.15, 1., rMatch) : 1.;
+    float rBoost = uActiveRegion >= 0. ? rMatch : 0.;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.);
+    float sz = uSize * (0.5+aRandom*0.5) * (1.+n1*0.25) * (0.85 + fillRatio*0.3);
+    sz *= (1.+rBoost*0.5) * (1.+aSurface*0.25);
+    gl_PointSize = max(sz * (18./(-mv.z)), 0.5);
+    float act = smoothstep(-0.2,0.9, abs(n1)*0.5+abs(n2)*0.3+abs(n3)*0.2);
+    vAlpha = mix(0.04, 0.45, act) * rDim * fillBright * (1.+aSurface*0.25) * (1.+rBoost*0.5);
+    vColor = aColor * rDim * fillBright;
+    gl_Position = projectionMatrix * mv;
+}`;
+const cloudFS = `
+varying float vAlpha;
+varying vec3 vColor;
+void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    gl_FragColor = vec4(vColor, smoothstep(0.5,0.08,d) * vAlpha);
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Shader: Category Nodes (large, bright, pulsing halo)
+// ══════════════════════════════════════════════════════════════
+const catVS = `
+${NOISE_GLSL}
+uniform float uTime;
+uniform float uActiveRegion;
+attribute vec3 aColor;
+attribute float aRegion;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    vec3 pos = position;
+    float t = uTime * 0.03;
+    float n = snoise(vec3(pos.x*0.15+t, pos.y*0.15, pos.z*0.15));
+    pos += n * 0.03;
+    float rMatch = step(abs(aRegion - uActiveRegion), 0.1);
+    float rDim = uActiveRegion >= 0. ? mix(0.3, 1., rMatch) : 1.;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.);
+    float pulse = 1.0 + sin(uTime*0.8 + aRegion*1.5)*0.12;
+    gl_PointSize = max(180. * rDim * pulse / (-mv.z), 10.0);
+    vColor = aColor * rDim;
+    vAlpha = (1.0 + sin(uTime*0.5 + pos.x*1.5)*0.05) * rDim;
+    gl_Position = projectionMatrix * mv;
+}`;
+const catFS = `
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    float core = smoothstep(0.15,0.0,d) * 0.9;
+    float glow = smoothstep(0.5,0.05,d) * 0.55;
+    float ring = smoothstep(0.5,0.35,d) * smoothstep(0.2,0.32,d) * 0.4;
+    float a = (core + glow + ring) * vAlpha;
+    gl_FragColor = vec4(vColor + core*0.35, a);
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Shader: Memory Nodes (medium, ring effect)
+// ══════════════════════════════════════════════════════════════
+const memVS = `
+${NOISE_GLSL}
+uniform float uTime;
+uniform float uActiveRegion;
+attribute vec3 aColor;
+attribute float aRegion;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    vec3 pos = position;
+    float t = uTime * 0.05;
+    float n = snoise(vec3(pos.x*0.2+t, pos.y*0.2, pos.z*0.2));
+    pos += n * 0.04;
+    float rMatch = step(abs(aRegion - uActiveRegion), 0.1);
+    float rDim = uActiveRegion >= 0. ? mix(0.25, 1., rMatch) : 1.;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.);
+    gl_PointSize = max(90. * rDim / (-mv.z), 5.0);
+    vColor = aColor * rDim;
+    vAlpha = (0.8 + sin(uTime*0.7 + pos.x*2.)*0.06) * rDim;
+    gl_Position = projectionMatrix * mv;
+}`;
+const memFS = `
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    float ring = smoothstep(0.5,0.32,d) * smoothstep(0.15,0.26,d);
+    float core = smoothstep(0.18,0.0,d) * 0.6;
+    float a = (ring*0.65 + core) * vAlpha;
+    gl_FragColor = vec4(vColor + core*0.2, a);
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Shader: Pulse Particles (flow along connections)
+// ══════════════════════════════════════════════════════════════
+const pulseVS = `
+${NOISE_GLSL}
+uniform float uTime;
+attribute vec3 aStart;
+attribute vec3 aEnd;
+attribute float aPhase;
+attribute vec3 aColor;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    float prog = fract(uTime * 0.12 + aPhase);
+    vec3 pos = mix(aStart, aEnd, prog);
+    pos += snoise(pos*0.3 + uTime*0.08) * 0.04;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.);
+    gl_PointSize = max(30./(-mv.z), 2.0);
+    vColor = aColor;
+    vAlpha = 0.55 * sin(prog * 3.14159);
+    gl_Position = projectionMatrix * mv;
+}`;
+const pulseFS = `
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    float d = length(gl_PointCoord - vec2(0.5));
+    if (d > 0.5) discard;
+    gl_FragColor = vec4(vColor, smoothstep(0.5,0.05,d) * vAlpha);
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Shader: Paper Stars (twinkle + collection-colored)
+// ══════════════════════════════════════════════════════════════
+const starVS = `
+${NOISE_GLSL}
+uniform float uTime;
+attribute float aSize;
+attribute vec3 aColor;
+attribute float aTwinkle;
+attribute float aVisible;
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    vec3 pos = position;
+    float twinkle = sin(uTime * aTwinkle + pos.x * 0.5 + pos.y * 0.3) * 0.5 + 0.5;
+    vec4 mv = modelViewMatrix * vec4(pos, 1.);
+    gl_PointSize = aSize * (0.7 + twinkle * 0.4) * (80. / (-mv.z));
+    vColor = aColor;
+    vAlpha = aVisible * (0.5 + twinkle * 0.5);
+    gl_Position = projectionMatrix * mv;
+}`;
+const starFS = `
+varying vec3 vColor;
+varying float vAlpha;
+void main() {
+    vec2 uv = gl_PointCoord - 0.5;
+    float d = length(uv);
+    if (d > 0.5) discard;
+    float core = smoothstep(0.12, 0.0, d);
+    float glow = smoothstep(0.5, 0.0, d) * 0.4;
+    float spike = max(
+        smoothstep(0.06, 0.0, abs(uv.x)) * smoothstep(0.35, 0.0, abs(uv.y)),
+        smoothstep(0.06, 0.0, abs(uv.y)) * smoothstep(0.35, 0.0, abs(uv.x))
+    ) * 0.5;
+    float a = (core + glow + spike) * vAlpha;
+    gl_FragColor = vec4(vColor + core * 0.4, a);
+}`;
+
+// ══════════════════════════════════════════════════════════════
+// Brain SDF
+// ══════════════════════════════════════════════════════════════
+function brainSDF(x, y, z) {
+    const ax = Math.abs(x);
+    let d = (ax / 1.3) ** 2 + (y / 0.88) ** 2 + (z / 1.08) ** 2;
+    if (ax < 0.07 && y > 0.08)
+        d += 0.55 * (1 - ax / 0.07) * Math.max(0, (y - 0.08) / 0.7);
+    d -= 0.07 * Math.exp(-((z - 0.65) ** 2) * 4);
+    d -= 0.1 * Math.exp(-((y + 0.15) ** 2) * 6) * Math.exp(-((ax - 0.85) ** 2) * 5) * Math.exp(-z * z * 2);
+    if (y < -0.45) d += Math.pow(Math.abs(y + 0.45), 1.5) * 2;
+    d -= 0.05 * Math.exp(-((z + 0.7) ** 2) * 3);
+    if (d < 1.0) return { inside: true, d, cerebellum: false };
+    const cbd = (x / 0.55) ** 2 + ((y + 0.52) / 0.32) ** 2 + ((z + 0.72) / 0.38) ** 2;
+    if (cbd < 1.0 && y < -0.15) return { inside: true, d: cbd, cerebellum: true };
+    return { inside: false, d, cerebellum: false };
+}
+
+function getRegion(x, y, z, cb) {
+    if (cb) return 4;
+    if (z > 0.25) return 0;
+    if (Math.abs(x) > 0.6 && y < 0.2) return 3;
+    if (Math.sqrt(x*x + y*y + z*z) < 0.55) return 1;
+    return 2;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Generate Brain Cloud
+// ══════════════════════════════════════════════════════════════
+function generateCloud(count) {
+    const pos = new Float32Array(count * 3);
+    const rnd = new Float32Array(count);
+    const reg = new Float32Array(count);
+    const col = new Float32Array(count * 3);
+    const srf = new Float32Array(count);
+    let i = 0;
+    while (i < count) {
+        const x = (Math.random() - 0.5) * 3.2;
+        const y = (Math.random() - 0.5) * 2.2;
+        const z = (Math.random() - 0.5) * 2.8;
+        const r = brainSDF(x, y, z);
+        if (!r.inside) continue;
+        pos[i*3]=x*BRAIN_SCALE; pos[i*3+1]=y*BRAIN_SCALE; pos[i*3+2]=z*BRAIN_SCALE;
+        rnd[i] = Math.random()*0.5+0.5;
+        const ri = getRegion(x, y, z, r.cerebellum);
+        reg[i] = ri;
+        const c = REGIONS[ri].color;
+        col[i*3]=c[0]; col[i*3+1]=c[1]; col[i*3+2]=c[2];
+        srf[i] = r.d > 0.82 ? 1 : 0;
+        i++;
+    }
+    return { pos, rnd, reg, col, srf };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Sample position within a brain region
+// ══════════════════════════════════════════════════════════════
+function sampleRegionPos(regionId) {
+    for (let a = 0; a < 50000; a++) {
+        const x = (Math.random()-0.5)*3.2;
+        const y = (Math.random()-0.5)*2.2;
+        const z = (Math.random()-0.5)*2.8;
+        const r = brainSDF(x, y, z);
+        if (!r.inside || r.d > 0.95) continue;
+        if (getRegion(x, y, z, r.cerebellum) === regionId)
+            return new THREE.Vector3(x*BRAIN_SCALE, y*BRAIN_SCALE, z*BRAIN_SCALE);
+    }
+    return new THREE.Vector3(0, 0, 0);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Brain Outline
+// ══════════════════════════════════════════════════════════════
+function createOutline(scene) {
+    const mat = new THREE.LineBasicMaterial({
+        color: 0x334466, transparent: true, opacity: 0.15,
+        blending: THREE.AdditiveBlending
+    });
+    function trace(axis, val) {
+        const pts = [];
+        for (let i = 0; i <= 180; i++) {
+            const a = (i/180)*Math.PI*2, u = Math.cos(a), v = Math.sin(a);
+            for (let r = 2; r > 0.05; r -= 0.012) {
+                let x, y, z;
+                if (axis==='y') { x=u*r; y=val; z=v*r; } else { x=val; y=u*r; z=v*r; }
+                if (brainSDF(x, y, z).inside) {
+                    pts.push(new THREE.Vector3(x*BRAIN_SCALE, y*BRAIN_SCALE, z*BRAIN_SCALE));
+                    break;
+                }
+            }
+        }
+        if (pts.length > 20) {
+            const curve = new THREE.CatmullRomCurve3(pts, true);
+            scene.add(new THREE.Line(
+                new THREE.BufferGeometry().setFromPoints(curve.getPoints(200)), mat
+            ));
+        }
+    }
+    [-0.3,0,0.25,0.5].forEach(v => trace('y',v));
+    [0.35,0.65,-0.35,-0.65].forEach(v => trace('x',v));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Three.js Setup
+// ══════════════════════════════════════════════════════════════
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setClearColor(0x000005);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(55, window.innerWidth/window.innerHeight, 0.1, 200);
+camera.position.set(0, 0.5, 9);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.05;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.35;
+controls.minDistance = 3;
+controls.maxDistance = 60;
+
+// ══════════════════════════════════════════════════════════════
+// Brain Cloud Particle System
+// ══════════════════════════════════════════════════════════════
+const cloud = generateCloud(PARTICLE_COUNT);
+const cloudGeo = new THREE.BufferGeometry();
+cloudGeo.setAttribute('position', new THREE.BufferAttribute(cloud.pos, 3));
+cloudGeo.setAttribute('aRandom',  new THREE.BufferAttribute(cloud.rnd, 1));
+cloudGeo.setAttribute('aRegion',  new THREE.BufferAttribute(cloud.reg, 1));
+cloudGeo.setAttribute('aColor',   new THREE.BufferAttribute(cloud.col, 3));
+cloudGeo.setAttribute('aSurface', new THREE.BufferAttribute(cloud.srf, 1));
+
+const cloudMat = new THREE.ShaderMaterial({
+    vertexShader: cloudVS, fragmentShader: cloudFS,
+    uniforms: {
+        uTime: {value:0}, uSize: {value:3.5},
+        uMouse3D: {value:new THREE.Vector3(999,999,999)},
+        uMouseActive: {value:0}, uActiveRegion: {value:-1},
+        uFillRatios: {value: [0.5, 0.5, 0.5, 0.5, 0.5]},
+    },
+    transparent: true, blending: THREE.AdditiveBlending,
+    depthTest: false, depthWrite: false,
+});
+scene.add(new THREE.Points(cloudGeo, cloudMat));
+
+// ══════════════════════════════════════════════════════════════
+// Paper Stars — loaded from galaxy-data.json (L5 nodes)
+// ══════════════════════════════════════════════════════════════
+let paperData = [];
+let paperPositions3D = [];
+let starGeo, starPoints, starMat;
+let starVisibleAttr;
+
+function buildPaperStars(l5nodes) {
+    paperData = l5nodes;
+    const N = l5nodes.length;
+    const pos      = new Float32Array(N * 3);
+    const col      = new Float32Array(N * 3);
+    const sizes    = new Float32Array(N);
+    const twinkles = new Float32Array(N);
+    const visible  = new Float32Array(N);
+
+    paperPositions3D = [];
+
+    l5nodes.forEach((p, i) => {
+        let px, py, pz;
+        if (p.x != null && p.y != null) {
+            // Map x,y coordinates to spherical shell positions
+            const theta = (p.x / 120) * Math.PI;
+            const phi   = (p.y / 100) * Math.PI * 0.8;
+            const r = 18 + Math.random() * 10;
+            px = r * Math.sin(phi + Math.PI/2) * Math.cos(theta);
+            py = r * Math.cos(phi + Math.PI/2);
+            pz = r * Math.sin(phi + Math.PI/2) * Math.sin(theta);
+        } else {
+            // Random spherical shell
+            const t = Math.random() * Math.PI * 2;
+            const ph = Math.acos(Math.random() * 2 - 1);
+            const r = 18 + Math.random() * 14;
+            px = r * Math.sin(ph) * Math.cos(t);
+            py = r * Math.sin(ph) * Math.sin(t);
+            pz = r * Math.cos(ph);
+        }
+
+        pos[i*3]   = px;
+        pos[i*3+1] = py;
+        pos[i*3+2] = pz;
+        paperPositions3D.push(new THREE.Vector3(px, py, pz));
+
+        const coll = p.collection || 'papers';
+        const c = COLLECTION_COLORS[coll] || COLLECTION_COLORS.papers;
+        col[i*3]   = c[0];
+        col[i*3+1] = c[1];
+        col[i*3+2] = c[2];
+
+        sizes[i]    = COLLECTION_SIZE[coll] || 0.9;
+        twinkles[i] = 0.5 + Math.random() * 2.5;
+        visible[i]  = 1.0;
+    });
+
+    starVisibleAttr = visible;
+
+    starGeo = new THREE.BufferGeometry();
+    starGeo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    starGeo.setAttribute('aColor',   new THREE.BufferAttribute(col, 3));
+    starGeo.setAttribute('aSize',    new THREE.BufferAttribute(sizes, 1));
+    starGeo.setAttribute('aTwinkle', new THREE.BufferAttribute(twinkles, 1));
+    starGeo.setAttribute('aVisible', new THREE.BufferAttribute(visible, 1));
+    starGeo.computeBoundingSphere();
+
+    starMat = new THREE.ShaderMaterial({
+        vertexShader: starVS, fragmentShader: starFS,
+        uniforms: { uTime: {value:0} },
+        transparent: true, blending: THREE.AdditiveBlending,
+        depthTest: false, depthWrite: false,
+    });
+
+    starPoints = new THREE.Points(starGeo, starMat);
+    scene.add(starPoints);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Build brain nodes from real data
+// ══════════════════════════════════════════════════════════════
+let catPositions = [];
+let memPositions = [];
+let catPoints, memPoints, catMat, memMat;
+let connGroup, pulseMat;
+
+function sampleNodes(nodes, maxCount) {
+    if (nodes.length <= maxCount) return nodes;
+    // Shuffle and pick diverse subset
+    const shuffled = [...nodes].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, maxCount);
+}
+
+function buildBrainNodes() {
+    // Category nodes: one per layer, desc from real count
+    CATEGORY_NODES = GALAXY_LAYERS.map((layer, idx) => ({
+        region: idx,
+        name: layer.name,
+        desc: `${layer.count} entries from ${REGIONS[idx].brain.toLowerCase()} memory layer`,
+    }));
+
+    // Memory nodes: sample up to 15 per layer (L1-L4 only)
+    DISPLAY_MEM_NODES = [];
+    const SAMPLE_COUNTS = [12, 15, 7, 12]; // L1-L4
+    for (let layerIdx = 0; layerIdx < 4; layerIdx++) {
+        const layerNodes = GALAXY_NODES.filter(n => n.layer === layerIdx);
+        const sampled = sampleNodes(layerNodes, SAMPLE_COUNTS[layerIdx]);
+        sampled.forEach(n => {
+            DISPLAY_MEM_NODES.push({
+                region: layerIdx,
+                parent: layerIdx,
+                name: n.name.length > 40 ? n.name.slice(0, 37) + '…' : n.name,
+                desc: (n.category || n.source_file || ''),
+                full_text: n.full_text || n.name,
+                source_file: n.source_file || '',
+                category: n.category || '',
+                memory_type: n.memory_type || '',
+                project: n.project || '',
+                path: n.path || '',
+                _origNode: n,
+            });
+        });
+    }
+
+    // Position category nodes
+    catPositions = CATEGORY_NODES.map(n => sampleRegionPos(n.region));
+
+    // Position memory nodes
+    memPositions = DISPLAY_MEM_NODES.map(n => sampleRegionPos(n.region));
+
+    // Build category geometry
+    const catGeo = new THREE.BufferGeometry();
+    const cPos = new Float32Array(CATEGORY_NODES.length * 3);
+    const cCol = new Float32Array(CATEGORY_NODES.length * 3);
+    const cReg = new Float32Array(CATEGORY_NODES.length);
+    CATEGORY_NODES.forEach((n, i) => {
+        const p = catPositions[i];
+        cPos[i*3]=p.x; cPos[i*3+1]=p.y; cPos[i*3+2]=p.z;
+        const c = REGIONS[n.region].color;
+        cCol[i*3]=c[0]*0.35+0.65; cCol[i*3+1]=c[1]*0.35+0.65; cCol[i*3+2]=c[2]*0.35+0.65;
+        cReg[i] = n.region;
+    });
+    catGeo.setAttribute('position', new THREE.BufferAttribute(cPos, 3));
+    catGeo.setAttribute('aColor',   new THREE.BufferAttribute(cCol, 3));
+    catGeo.setAttribute('aRegion',  new THREE.BufferAttribute(cReg, 1));
+    catGeo.computeBoundingSphere();
+
+    catMat = new THREE.ShaderMaterial({
+        vertexShader: catVS, fragmentShader: catFS,
+        uniforms: { uTime: {value:0}, uActiveRegion: {value:-1} },
+        transparent: true, blending: THREE.AdditiveBlending,
+        depthTest: false, depthWrite: false,
+    });
+    catPoints = new THREE.Points(catGeo, catMat);
+    scene.add(catPoints);
+
+    // Build memory geometry
+    const memGeo = new THREE.BufferGeometry();
+    const mPos = new Float32Array(DISPLAY_MEM_NODES.length * 3);
+    const mCol = new Float32Array(DISPLAY_MEM_NODES.length * 3);
+    const mReg = new Float32Array(DISPLAY_MEM_NODES.length);
+    DISPLAY_MEM_NODES.forEach((n, i) => {
+        const p = memPositions[i];
+        mPos[i*3]=p.x; mPos[i*3+1]=p.y; mPos[i*3+2]=p.z;
+        const c = REGIONS[n.region].color;
+        mCol[i*3]=c[0]*0.5+0.5; mCol[i*3+1]=c[1]*0.5+0.5; mCol[i*3+2]=c[2]*0.5+0.5;
+        mReg[i] = n.region;
+    });
+    memGeo.setAttribute('position', new THREE.BufferAttribute(mPos, 3));
+    memGeo.setAttribute('aColor',   new THREE.BufferAttribute(mCol, 3));
+    memGeo.setAttribute('aRegion',  new THREE.BufferAttribute(mReg, 1));
+    memGeo.computeBoundingSphere();
+
+    memMat = new THREE.ShaderMaterial({
+        vertexShader: memVS, fragmentShader: memFS,
+        uniforms: { uTime: {value:0}, uActiveRegion: {value:-1} },
+        transparent: true, blending: THREE.AdditiveBlending,
+        depthTest: false, depthWrite: false,
+    });
+    memPoints = new THREE.Points(memGeo, memMat);
+    scene.add(memPoints);
+
+    // Build connections (parent + a few semantic)
+    const CONNECTIONS = [];
+    DISPLAY_MEM_NODES.forEach((m, mi) => {
+        CONNECTIONS.push(['parent', 'cat', m.parent, 'mem', mi]);
+    });
+    // Sparse semantic cross-links
+    const seenPairs = new Set();
+    for (let k = 0; k < Math.min(8, DISPLAY_MEM_NODES.length); k++) {
+        const a = Math.floor(Math.random() * DISPLAY_MEM_NODES.length);
+        const b = Math.floor(Math.random() * DISPLAY_MEM_NODES.length);
+        if (a !== b && !seenPairs.has(`${a}-${b}`)) {
+            seenPairs.add(`${a}-${b}`);
+            CONNECTIONS.push(['semantic', 'mem', a, 'mem', b]);
+        }
+    }
+
+    function resolvePos(tier, idx) {
+        return tier === 'cat' ? catPositions[idx] : memPositions[idx];
+    }
+    function resolveRegion(tier, idx) {
+        return tier === 'cat' ? CATEGORY_NODES[idx].region : DISPLAY_MEM_NODES[idx].region;
+    }
+
+    connGroup = new THREE.Group();
+    const connEndpoints = [];
+    CONNECTIONS.forEach(conn => {
+        const [type, ft, fi, tt, ti] = conn;
+        const s = resolvePos(ft, fi), e = resolvePos(tt, ti);
+        if (!s || !e) return;
+        const mid = new THREE.Vector3().addVectors(s, e).multiplyScalar(0.5);
+        mid.y += type === 'parent' ? 0.15 : 0.3;
+        const curve = new THREE.QuadraticBezierCurve3(s, mid, e);
+        const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(30));
+        const rIdx = resolveRegion(ft, fi);
+        const c = REGIONS[rIdx].color;
+        const opacity = type === 'parent' ? 0.18 : 0.28;
+        const mat = new THREE.LineBasicMaterial({
+            color: new THREE.Color(c[0], c[1], c[2]),
+            transparent: true, opacity,
+            blending: THREE.AdditiveBlending, depthTest: false,
+        });
+        connGroup.add(new THREE.Line(geo, mat));
+        connEndpoints.push({ s, e, srcRegion: rIdx, dstRegion: resolveRegion(tt, ti) });
+    });
+    scene.add(connGroup);
+
+    const PPL = 3;
+    const pulseCount = connEndpoints.length * PPL;
+    const pStart = new Float32Array(pulseCount * 3);
+    const pEnd   = new Float32Array(pulseCount * 3);
+    const pPhase = new Float32Array(pulseCount);
+    const pCol   = new Float32Array(pulseCount * 3);
+    const pPos   = new Float32Array(pulseCount * 3);
+
+    connEndpoints.forEach((ep, ci) => {
+        const { s, e, srcRegion, dstRegion } = ep;
+        const sc = REGIONS[srcRegion].color;
+        const ec = REGIONS[dstRegion].color;
+        for (let j = 0; j < PPL; j++) {
+            const idx = ci * PPL + j;
+            pStart[idx*3]=s.x; pStart[idx*3+1]=s.y; pStart[idx*3+2]=s.z;
+            pEnd[idx*3]=e.x;   pEnd[idx*3+1]=e.y;   pEnd[idx*3+2]=e.z;
+            pPhase[idx] = j / PPL;
+            pCol[idx*3]  =(sc[0]+ec[0])*0.4+0.3;
+            pCol[idx*3+1]=(sc[1]+ec[1])*0.4+0.3;
+            pCol[idx*3+2]=(sc[2]+ec[2])*0.4+0.3;
+            pPos[idx*3]=s.x; pPos[idx*3+1]=s.y; pPos[idx*3+2]=s.z;
+        }
+    });
+
+    const pulseGeo = new THREE.BufferGeometry();
+    pulseGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    pulseGeo.setAttribute('aStart',   new THREE.BufferAttribute(pStart, 3));
+    pulseGeo.setAttribute('aEnd',     new THREE.BufferAttribute(pEnd, 3));
+    pulseGeo.setAttribute('aPhase',   new THREE.BufferAttribute(pPhase, 1));
+    pulseGeo.setAttribute('aColor',   new THREE.BufferAttribute(pCol, 3));
+
+    pulseMat = new THREE.ShaderMaterial({
+        vertexShader: pulseVS, fragmentShader: pulseFS,
+        uniforms: { uTime: {value:0} },
+        transparent: true, blending: THREE.AdditiveBlending,
+        depthTest: false, depthWrite: false,
+    });
+    scene.add(new THREE.Points(pulseGeo, pulseMat));
+
+    // Update stats
+    document.getElementById('s-n').textContent = CATEGORY_NODES.length + DISPLAY_MEM_NODES.length;
+    document.getElementById('s-c').textContent = CONNECTIONS.length;
+
+    // Build legend with real counts
+    buildLegend();
+
+    // Update fill ratios
+    updateFillRatios();
+}
+
+function updateFillRatios() {
+    const ratios = GALAXY_LAYERS.map((layer, i) =>
+        Math.min(1.0, layer.count / FILL_MAX[i])
+    );
+    cloudMat.uniforms.uFillRatios.value = ratios;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Brain Outline
+// ══════════════════════════════════════════════════════════════
+createOutline(scene);
+
+// ══════════════════════════════════════════════════════════════
+// Data Loading
+// ══════════════════════════════════════════════════════════════
+async function loadGalaxyData() {
+    let data = null;
+    try {
+        const r = await fetch('./galaxy-data.json');
+        if (r.ok) data = await r.json();
+    } catch(e) {
+        console.warn('galaxy-data.json load failed, trying galaxy.json', e);
+    }
+
+    if (!data) {
+        try {
+            const r = await fetch('./galaxy.json');
+            if (r.ok) data = await r.json();
+        } catch(e) {
+            console.warn('galaxy.json also not found', e);
+        }
+    }
+
+    if (data && data.layers && data.nodes) {
+        GALAXY_LAYERS = data.layers;
+        GALAXY_NODES  = data.nodes;
+        GALAXY_STATS  = data.stats || {};
+
+        // Update badge
+        const total = GALAXY_STATS.total_nodes || GALAXY_NODES.length;
+        document.getElementById('s-nodes').textContent = total.toLocaleString();
+
+        // L5 nodes → star shell
+        const l5nodes = GALAXY_NODES.filter(n => n.layer === 4);
+        buildPaperStars(l5nodes);
+        document.getElementById('s-l5').textContent = l5nodes.length.toLocaleString();
+
+        // Build brain nodes
+        buildBrainNodes();
+
+    } else {
+        // Fallback: static data
+        GALAXY_LAYERS = [
+            {id:0, name:'L1 · Behavioral Rules', count:450},
+            {id:1, name:'L2 · User Preferences', count:49},
+            {id:2, name:'L3 · AI Memory',        count:7},
+            {id:3, name:'L4 · Structured Archive',count:44},
+            {id:4, name:'L5 · Knowledge Retrieval',count:206},
+        ];
+        GALAXY_NODES = [];
+        GALAXY_STATS = {total_nodes: 756};
+        buildBrainNodes();
+        // Fallback scattered stars
+        const N = 200, p = new Float32Array(N*3);
+        for (let i=0;i<N;i++) {
+            const t=Math.random()*Math.PI*2, ph=Math.acos(Math.random()*2-1), r=20+Math.random()*15;
+            p[i*3]=r*Math.sin(ph)*Math.cos(t); p[i*3+1]=r*Math.sin(ph)*Math.sin(t); p[i*3+2]=r*Math.cos(ph);
+        }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(p, 3));
+        scene.add(new THREE.Points(g, new THREE.PointsMaterial({
+            size:0.12, color:0x334466, transparent:true, opacity:0.5,
+            blending:THREE.AdditiveBlending, depthTest:false
+        })));
+    }
+}
+
+// Build legend immediately so layer names are always visible
+buildLegend();
+loadGalaxyData();
+
+// ══════════════════════════════════════════════════════════════
+// Search Filter
+// ══════════════════════════════════════════════════════════════
+let searchQuery = '';
+const searchInput  = document.getElementById('search-input');
+const searchClear  = document.getElementById('search-clear');
+const searchCount  = document.getElementById('search-count');
+
+function applySearch(q) {
+    searchQuery = q.trim().toLowerCase();
+    searchClear.style.display = q ? 'block' : 'none';
+    if (!starGeo || !starVisibleAttr) return;
+
+    let matched = 0;
+    paperData.forEach((p, i) => {
+        let vis = 1.0;
+        if (searchQuery) {
+            const hit = (p.name        || '').toLowerCase().includes(searchQuery) ||
+                        (p.source_file || '').toLowerCase().includes(searchQuery) ||
+                        (p.collection  || '').toLowerCase().includes(searchQuery) ||
+                        (p.full_text   || '').toLowerCase().includes(searchQuery);
+            vis = hit ? 1.0 : 0.03;
+            if (hit) matched++;
+        }
+        starVisibleAttr[i] = vis;
+    });
+
+    starGeo.getAttribute('aVisible').needsUpdate = true;
+
+    const total = paperData.length;
+    if (searchQuery) {
+        searchCount.textContent = `${matched} NODE${matched !== 1 ? 'S' : ''} MATCHED`;
+        searchCount.style.display = 'block';
+        document.getElementById('s-l5').textContent = matched;
+    } else {
+        searchCount.style.display = 'none';
+        document.getElementById('s-l5').textContent = total;
+    }
+}
+
+searchInput.addEventListener('input', e => applySearch(e.target.value));
+searchClear.addEventListener('click', () => {
+    searchInput.value = '';
+    applySearch('');
+    searchInput.focus();
+});
+
+// ══════════════════════════════════════════════════════════════
+// Mouse Interaction
+// ══════════════════════════════════════════════════════════════
+const raycaster  = new THREE.Raycaster();
+raycaster.params.Points.threshold = 0.8;
+const mouseNDC   = new THREE.Vector2();
+const mousePlane = new THREE.Plane(new THREE.Vector3(0,0,1), 0);
+const mousePoint = new THREE.Vector3();
+
+let lastHoveredStar = -1;
+const nodeTip  = document.getElementById('node-tip');
+const paperTip = document.getElementById('paper-tip');
+
+canvas.addEventListener('mousemove', e => {
+    mouseNDC.x = (e.clientX / window.innerWidth)  * 2 - 1;
+    mouseNDC.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouseNDC, camera);
+
+    // Particle repulsion
+    if (raycaster.ray.intersectPlane(mousePlane, mousePoint)) {
+        cloudMat.uniforms.uMouse3D.value.copy(mousePoint);
+        cloudMat.uniforms.uMouseActive.value = 1;
+    }
+
+    // Node hover check
+    let hasNodeHit = false;
+    if (catPoints && memPoints) {
+        const catHits = raycaster.intersectObject(catPoints);
+        const memHits = raycaster.intersectObject(memPoints);
+        hasNodeHit = catHits.length > 0 || memHits.length > 0;
+    }
+
+    // Paper star hover
+    let hasPaperHit = false;
+    if (starPoints) {
+        raycaster.params.Points.threshold = 1.5;
+        const starHits = raycaster.intersectObject(starPoints);
+        raycaster.params.Points.threshold = 0.8;
+        if (starHits.length > 0) {
+            const idx = starHits[0].index;
+            const node = paperData[idx];
+            if (node && starVisibleAttr && starVisibleAttr[idx] > 0.5) {
+                if (idx !== lastHoveredStar) {
+                    lastHoveredStar = idx;
+                    const coll = node.collection || 'papers';
+                    const collColor = {
+                        papers:'#4fc3f7', notes:'#ffb74d',
+                        documents:'#81c784', ponywriterx_materials:'#ce93d8'
+                    };
+                    document.getElementById('pt-title').textContent =
+                        (node.name || '').length > 58 ? node.name.slice(0,55)+'…' : (node.name || '');
+                    document.getElementById('pt-meta').textContent =
+                        `${node.source_file || node.path || '—'}`;
+                    const tl = document.getElementById('pt-tier');
+                    tl.textContent = coll.toUpperCase().replace(/_/g,' ');
+                    tl.style.color  = collColor[coll] || '#4fc3f7';
+                }
+                paperTip.style.display = 'block';
+                paperTip.style.left = Math.min(e.clientX + 16, window.innerWidth - 280) + 'px';
+                paperTip.style.top  = Math.min(e.clientY - 20, window.innerHeight - 100) + 'px';
+                hasPaperHit = true;
+            }
+        }
+    }
+
+    if (!hasPaperHit) {
+        paperTip.style.display = 'none';
+        lastHoveredStar = -1;
+    }
+
+    canvas.style.cursor = (hasNodeHit || hasPaperHit) ? 'pointer' : 'crosshair';
+});
+
+canvas.addEventListener('mouseleave', () => {
+    cloudMat.uniforms.uMouseActive.value = 0;
+    nodeTip.style.display  = 'none';
+    paperTip.style.display = 'none';
+    lastHoveredStar = -1;
+});
+
+canvas.addEventListener('click', e => {
+    raycaster.setFromCamera(mouseNDC, camera);
+
+    // Paper star click (outer layer takes priority)
+    if (starPoints) {
+        raycaster.params.Points.threshold = 1.5;
+        const starHits = raycaster.intersectObject(starPoints);
+        raycaster.params.Points.threshold = 0.8;
+        if (starHits.length > 0) {
+            const idx = starHits[0].index;
+            const node = paperData[idx];
+            if (node && starVisibleAttr && starVisibleAttr[idx] > 0.5) {
+                showPaperPanel(node);
+                return;
+            }
+        }
+    }
+
+    // Brain node click
+    nodeTip.style.display = 'none';
+
+    if (!catPoints || !memPoints) {
+        closePanel(); closePaperPanel();
+        return;
+    }
+
+    const catHits = raycaster.intersectObject(catPoints);
+    const memHits = raycaster.intersectObject(memPoints);
+
+    let node = null, reg = null, tierLabel = '';
+    if (catHits.length > 0 && (memHits.length === 0 || catHits[0].distanceToRay < memHits[0].distanceToRay)) {
+        node = CATEGORY_NODES[catHits[0].index];
+        reg  = REGIONS[node.region];
+        tierLabel = 'CATEGORY';
+    } else if (memHits.length > 0) {
+        node = DISPLAY_MEM_NODES[memHits[0].index];
+        reg  = REGIONS[node.region];
+        tierLabel = 'MEMORY';
+    }
+
+    if (node) {
+        if (tierLabel === 'MEMORY') {
+            // Show full detail panel for memory nodes
+            showNodeDetailPanel(node, reg);
+        } else {
+            // Category node → tooltip
+            document.getElementById('nt-name').textContent  = node.name;
+            document.getElementById('nt-layer').textContent = `${reg.name} · ${tierLabel}`;
+            document.getElementById('nt-layer').style.color = reg.hex;
+            document.getElementById('nt-desc').textContent  = node.desc;
+            nodeTip.style.display = 'block';
+            nodeTip.style.left = Math.min(e.clientX + 16, window.innerWidth - 250) + 'px';
+            nodeTip.style.top  = Math.min(e.clientY - 20, window.innerHeight - 110) + 'px';
+            nodeTip.style.borderColor = reg.hex + '40';
+        }
+    } else {
+        closePanel();
+        closePaperPanel();
+        closeNodeDetailPanel();
+    }
+});
+
+// ══════════════════════════════════════════════════════════════
+// Node Detail Panel (real data)
+// ══════════════════════════════════════════════════════════════
+function showNodeDetailPanel(node, reg) {
+    closePanel(); closePaperPanel();
+    const panel = document.getElementById('node-detail-panel');
+
+    document.getElementById('nd-name').textContent = node.name;
+    const layerEl = document.getElementById('nd-layer');
+    layerEl.textContent = `${reg.name} · ${reg.brain}`;
+    layerEl.style.color = reg.hex;
+
+    const fullText = node.full_text || node.name;
+    document.getElementById('nd-fulltext').textContent =
+        fullText.length > 400 ? fullText.slice(0, 397) + '…' : fullText;
+
+    // Metadata
+    const meta = [];
+    if (node.source_file) meta.push(`<div><strong>SOURCE</strong> ${node.source_file}</div>`);
+    if (node.category)    meta.push(`<div><strong>CATEGORY</strong> ${node.category}</div>`);
+    if (node.memory_type) meta.push(`<div><strong>TYPE</strong> ${node.memory_type}</div>`);
+    if (node.project)     meta.push(`<div><strong>PROJECT</strong> ${node.project}</div>`);
+    if (node.path)        meta.push(`<div><strong>PATH</strong> ${node.path}</div>`);
+    document.getElementById('nd-meta').innerHTML = meta.join('');
+    panel.style.borderColor = reg.hex + '30';
+    panel.classList.add('show');
+}
+
+window.closeNodeDetailPanel = function() {
+    document.getElementById('node-detail-panel').classList.remove('show');
+};
+
+// ══════════════════════════════════════════════════════════════
+// Paper Panel (L5 nodes)
+// ══════════════════════════════════════════════════════════════
+function showPaperPanel(p) {
+    document.getElementById('panel').classList.remove('show');
+    document.getElementById('node-detail-panel').classList.remove('show');
+    activeRegion = -1;
+    if (cloudMat) cloudMat.uniforms.uActiveRegion.value = -1;
+    if (catMat) catMat.uniforms.uActiveRegion.value = -1;
+    if (memMat) memMat.uniforms.uActiveRegion.value = -1;
+    document.querySelectorAll('.litem').forEach(el => el.classList.remove('active'));
+
+    const coll = p.collection || 'papers';
+    const collColor = {
+        papers:'#4fc3f7', notes:'#ffb74d',
+        documents:'#81c784', ponywriterx_materials:'#ce93d8'
+    };
+    const tc = collColor[coll] || '#4fc3f7';
+
+    const tierEl = document.getElementById('pp-tier');
+    tierEl.textContent = coll.toUpperCase().replace(/_/g,' ');
+    tierEl.style.color = tc;
+
+    document.getElementById('pp-title').textContent  = p.name || '—';
+    document.getElementById('pp-journal').textContent = p.source_file || p.path || '—';
+    document.getElementById('pp-collection').textContent = coll;
+    document.getElementById('pp-layer').textContent  = 'L5';
+
+    const doiEl = document.getElementById('pp-doi');
+    const src = p.source_file || p.path || '';
+    doiEl.textContent = src ? `Source: ${src}` : '';
+
+    document.getElementById('paper-panel').style.borderColor = tc + '30';
+    document.getElementById('paper-panel').classList.add('show');
+}
+
+window.closePanel = function() {
+    document.getElementById('panel').classList.remove('show');
+    activeRegion = -1;
+    if (cloudMat) cloudMat.uniforms.uActiveRegion.value = -1;
+    if (catMat) catMat.uniforms.uActiveRegion.value = -1;
+    if (memMat) memMat.uniforms.uActiveRegion.value = -1;
+    document.querySelectorAll('.litem').forEach(el => el.classList.remove('active'));
+};
+
+window.closePaperPanel = function() {
+    document.getElementById('paper-panel').classList.remove('show');
+};
+
+// ══════════════════════════════════════════════════════════════
+// Legend UI (built after data loads, with real counts)
+// ══════════════════════════════════════════════════════════════
+
+function buildLegend() {
+    legendEl.innerHTML = '';
+    REGIONS.forEach((r, idx) => {
+        const layerData = GALAXY_LAYERS.find(l => l.id === idx);
+        const count = layerData ? layerData.count : '';
+        const item = document.createElement('div');
+        item.className = 'litem';
+        item.innerHTML = `<div class="ldot" style="color:${r.hex}"></div>${r.name}`;
+        item.onclick = () => {
+            activeRegion = activeRegion === idx ? -1 : idx;
+            if (cloudMat) cloudMat.uniforms.uActiveRegion.value = activeRegion;
+            if (catMat)   catMat.uniforms.uActiveRegion.value   = activeRegion;
+            if (memMat)   memMat.uniforms.uActiveRegion.value   = activeRegion;
+            document.querySelectorAll('.litem').forEach((el, i) =>
+                el.classList.toggle('active', i === activeRegion));
+
+            document.getElementById('paper-panel').classList.remove('show');
+            document.getElementById('node-detail-panel').classList.remove('show');
+
+            const panel = document.getElementById('panel');
+            if (activeRegion >= 0) {
+                const reg = REGIONS[activeRegion];
+                const ld = GALAXY_LAYERS.find(l => l.id === activeRegion);
+                document.getElementById('p-name').textContent  = reg.name;
+                document.getElementById('p-brain').textContent = `BRAIN REGION: ${reg.brain}`;
+                document.getElementById('p-desc').textContent  = reg.desc;
+                const regionMems = DISPLAY_MEM_NODES.filter(m => m.region === activeRegion);
+                document.getElementById('p-mems').innerHTML = regionMems.map(m =>
+                    `<div class="mi" style="border-color:${reg.hex}"><strong>${m.name}</strong>${m.desc ? ' — ' + m.desc : ''}</div>`
+                ).join('');
+                panel.classList.add('show');
+            } else {
+                panel.classList.remove('show');
+            }
+        };
+        legendEl.appendChild(item);
+    });
+}
+
+// ══════════════════════════════════════════════════════════════
+// Animation Loop
+// ══════════════════════════════════════════════════════════════
+let fc = 0, ft = 0;
+function animate() {
+    requestAnimationFrame(animate);
+    const t = performance.now() * 0.001;
+    cloudMat.uniforms.uTime.value = t;
+    if (catMat)   catMat.uniforms.uTime.value   = t;
+    if (memMat)   memMat.uniforms.uTime.value   = t;
+    if (pulseMat) pulseMat.uniforms.uTime.value = t;
+    if (starMat)  starMat.uniforms.uTime.value  = t;
+    fc++;
+    const now = performance.now();
+    if (now - ft > 1000) {
+        document.getElementById('s-fps').textContent = fc;
+        fc = 0; ft = now;
+    }
+    controls.update();
+    renderer.render(scene, camera);
+}
+animate();
+
+// ══════════════════════════════════════════════════════════════
+// Resize
+// ══════════════════════════════════════════════════════════════
+window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ══════════════════════════════════════════════════════════════
+// Initial Stats
+// ══════════════════════════════════════════════════════════════
+document.getElementById('s-p').textContent = PARTICLE_COUNT.toLocaleString();
+
+</script>
+</body>
+</html>

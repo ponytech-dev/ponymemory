@@ -277,6 +277,38 @@ def log_exec(
     return cursor.lastrowid
 
 
+# ── Maintenance logging ────────────────────────────────────────────────────────
+
+def log_maintenance(
+    conn: sqlite3.Connection,
+    task: str,
+    items_processed: int,
+    items_removed: int,
+    duration_seconds: float,
+) -> int:
+    """Record a maintenance task execution.
+
+    Args:
+        conn: Open database connection.
+        task: Maintenance task name (e.g. 'dedup', 'decay', 'consolidate').
+        items_processed: Number of items examined.
+        items_removed: Number of items removed/merged.
+        duration_seconds: How long the task took.
+
+    Returns:
+        The row id of the inserted log entry.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO maintenance_log (timestamp, task, items_processed, items_removed, duration_seconds)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (time.time(), task, items_processed, items_removed, duration_seconds),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
 # ── Queries ────────────────────────────────────────────────────────────────────
 
 def count_by_status(conn: sqlite3.Connection, status: str) -> int:

@@ -204,3 +204,20 @@ def test_payload_unicode(tmp_db):
     item = claim_next_item(conn)
     loaded = json.loads(item["payload"])
     assert loaded["text"] == "你好世界 🧠 memory"
+
+
+def test_log_maintenance(tmp_db):
+    """log_maintenance inserts a record into maintenance_log."""
+    from db import log_maintenance
+    conn = tmp_db
+    row_id = log_maintenance(conn, task="dedup", items_processed=50,
+                              items_removed=3, duration_seconds=1.5)
+    assert row_id is not None
+
+    cursor = conn.execute("SELECT * FROM maintenance_log")
+    rows = cursor.fetchall()
+    assert len(rows) == 1
+    assert rows[0]["task"] == "dedup"
+    assert rows[0]["items_processed"] == 50
+    assert rows[0]["items_removed"] == 3
+    assert rows[0]["duration_seconds"] == 1.5

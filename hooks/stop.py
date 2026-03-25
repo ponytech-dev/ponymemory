@@ -1,20 +1,26 @@
 #!/usr/bin/env python3
 """
-PonyMemory Stop Hook (v2 — 降噪 + 强制)
-触发时机：每次 Claude 完成一轮响应
-核心改进：区分"常规提醒"和"强制执行"，减少噪音提高执行率
+PonyMemory Stop Hook (v3 — transcript to SQLite queue)
+
+Reads new transcript lines since last run, writes user/assistant messages
+to the SQLite queue for downstream processing. No AI API calls. No additionalContext.
 """
-import fcntl
+import hashlib
 import json
 import os
-import subprocess
 import sys
+from pathlib import Path
+from typing import Optional
+
+# Allow importing db.py from the project root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db import init_db, write_to_queue, log_exec
+
+DEFAULT_CURSOR_DIR = os.path.expanduser("~/.claude/.ponymemory_cursors")
 
 
-COUNTER_FILE = os.path.expanduser("~/.claude/.ponymemory_response_count")
-
-
-def get_project_name():
+def get_project_name() -> str:
+    """Extract project name from the CWD env var."""
     cwd = os.environ.get("CWD", os.getcwd())
     pony_dir = os.path.expanduser("~/pony/")
     if cwd.startswith(pony_dir):
@@ -25,90 +31,137 @@ def get_project_name():
     return "pony"
 
 
-def check_unpushed_commits():
-    cwd = os.environ.get("CWD", os.getcwd())
+def _cursor_path(transcript_path: str, cursor_dir: str) -> Path:
+    """Return the cursor file path for a given transcript."""
+    key = hashlib.md5(transcript_path.encode()).hexdigest()[:8]
+    return Path(cursor_dir) / f"{key}.cursor"
+
+
+def read_transcript_incremental(
+    transcript_path: str,
+    cursor_dir: Optional[str] = None,
+) -> list[dict]:
+    """Read new lines from a JSONL transcript since the last cursor position.
+
+    Args:
+        transcript_path: Absolute path to the JSONL transcript file.
+        cursor_dir: Directory for cursor files. Defaults to DEFAULT_CURSOR_DIR.
+
+    Returns:
+        List of parsed JSON objects with type in ('user', 'assistant').
+    """
+    if cursor_dir is None:
+        cursor_dir = DEFAULT_CURSOR_DIR
+
+    Path(cursor_dir).mkdir(parents=True, exist_ok=True)
+    cursor_file = _cursor_path(transcript_path, cursor_dir)
+
+    # Read last known byte offset
+    last_offset = 0
+    if cursor_file.exists():
+        try:
+            last_offset = int(cursor_file.read_text().strip())
+        except (ValueError, OSError):
+            last_offset = 0
+
+    # Read new bytes from transcript
     try:
-        result = subprocess.run(
-            ["git", "log", "--oneline", "@{u}..HEAD"],
-            capture_output=True, text=True, cwd=cwd, timeout=3,
+        with open(transcript_path, "rb") as f:
+            f.seek(last_offset)
+            new_bytes = f.read()
+            new_offset = f.tell()
+    except OSError:
+        return []
+
+    # Persist updated cursor
+    cursor_file.write_text(str(new_offset))
+
+    if not new_bytes:
+        return []
+
+    # Decode and parse JSONL lines
+    results = []
+    for raw_line in new_bytes.decode("utf-8", errors="replace").splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            obj = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") in ("user", "assistant"):
+            results.append(obj)
+
+    return results
+
+
+def main() -> None:
+    # Read stdin JSON payload from Claude Code
+    try:
+        payload = json.loads(sys.stdin.read())
+    except (json.JSONDecodeError, OSError):
+        payload = {}
+
+    # Guard: prevent infinite loop
+    if payload.get("stop_hook_active"):
+        print(json.dumps({}))
+        return
+
+    session_id: str = payload.get("session_id", "unknown")
+    transcript_path: Optional[str] = payload.get("transcript_path")
+    project = get_project_name()
+
+    lines_captured = 0
+    queue_written = 0
+    error_msg: Optional[str] = None
+
+    conn = None
+    try:
+        conn = init_db()
+
+        if transcript_path:
+            new_lines = read_transcript_incremental(transcript_path)
+            lines_captured = len(new_lines)
+
+            for line in new_lines:
+                write_to_queue(
+                    conn,
+                    session_id=session_id,
+                    project=project,
+                    queue_type="conversation_line",
+                    payload=line,
+                )
+                queue_written += 1
+
+        log_exec(
+            conn,
+            hook="stop_hook_v3",
+            session_id=session_id,
+            lines_captured=lines_captured,
+            queue_written=queue_written,
         )
-        if result.returncode == 0:
-            lines = [l for l in result.stdout.strip().split("\n") if l]
-            return len(lines)
-    except Exception:
-        pass
-    return 0
 
-
-def get_response_count():
-    """原子读-改-写计数器，使用 fcntl 文件锁防止竞态"""
-    try:
-        os.makedirs(os.path.dirname(COUNTER_FILE), exist_ok=True)
-        # 创建文件如不存在
-        if not os.path.isfile(COUNTER_FILE):
-            with open(COUNTER_FILE, "w", encoding="utf-8") as f:
-                f.write("0")
-        with open(COUNTER_FILE, "r+", encoding="utf-8") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
+    except Exception as exc:
+        error_msg = str(exc)
+        print(f"[PonyMemory] stop hook error: {exc}", file=sys.stderr)
+        if conn is not None:
             try:
-                count = int(f.read().strip() or "0")
-            except ValueError:
-                count = 0
-            count += 1
-            f.seek(0)
-            f.write(str(count))
-            f.truncate()
-        return count
-    except Exception as e:
-        print(f"[PonyMemory] counter failed: {e}", file=sys.stderr)
-        return 1
+                log_exec(
+                    conn,
+                    hook="stop_hook_v3",
+                    session_id=session_id,
+                    lines_captured=lines_captured,
+                    queue_written=queue_written,
+                    error=error_msg,
+                )
+            except Exception:
+                pass
+    finally:
+        if conn is not None:
+            conn.close()
 
-
-def main():
-    project_name = get_project_name()
-    count = get_response_count()
-
-    sections = []
-
-    # 核心：记忆存储指令（每次都注入）
-    sections.append(
-        "**记忆检查**（每次响应后必须执行）：\n"
-        "本轮对话是否发生了：用户纠正 / 技术决策 / 发现问题 / 里程碑 / 用户偏好 / 领域知识？\n"
-        f"→ 是：`search_memories` 查重 → `store_memory(project=\"{project_name}\")` 或 `update_memory`\n"
-        "→ 否：跳过\n"
-        "存储格式：50-200字，含 what + why + impact。纠正/决策同步写 Obsidian decisions.md。"
-    )
-
-    # 条件触发：Git Push
-    unpushed = check_unpushed_commits()
-    if unpushed >= 3:
-        sections.append(
-            f"**Git Push**：{unpushed} 个未 push commit，请执行 push。"
-        )
-
-    # 周期触发：记忆维护（每 10 轮）
-    if count % 10 == 0:
-        sections.append(
-            f"**记忆维护**（第 {count} 轮，自动触发）：\n"
-            "`list_all_memories(limit=50)` → 合并重复 → 删除矛盾旧条目 → 清理 >30天 session_summary"
-        )
-
-    # 周期触发：规则提取（每 5 轮）
-    if count % 5 == 0:
-        sections.append(
-            "**规则提取**：扫描最近对话，是否有'不要/应该/别/禁止'模式？有则以选择题确认后写入对应层。"
-        )
-
-    output = {}
-    if sections:
-        output["additionalContext"] = "\n".join(sections)
-
-    print(json.dumps(output, ensure_ascii=False))
+    print(json.dumps({}))
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print(f"[PonyMemory] stop fatal: {e}", file=sys.stderr)
-        print(json.dumps({}))
+    main()

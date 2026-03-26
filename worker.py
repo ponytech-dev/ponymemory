@@ -22,7 +22,7 @@ from db import (
 )
 from extractor import format_conversation, extract_facts, filter_by_quality
 from embedder import embed_text, search_qdrant, store_qdrant_memory, check_qdrant_health
-from obsidian_writer import write_obsidian_entry
+from obsidian_writer import write_obsidian_entry, write_obsidian_milestone
 
 # ---------------------------------------------------------------------------
 # Fallback file for when Qdrant is unreachable
@@ -230,14 +230,228 @@ def backfill_fallback() -> None:
         logger.info("Fallback file cleared — all entries backfilled")
 
 
+# ---------------------------------------------------------------------------
+# Tool event and MCP download processors (Phase 2)
+# ---------------------------------------------------------------------------
+
+def _read_file_safe(path: str, max_chars: int = 4000) -> str | None:
+    """Read a file and return its content truncated to max_chars, or None on error."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return f.read()[:max_chars]
+    except Exception:
+        return None
+
+
+def _index_text_file(file_path: str, collection: str, project: str) -> None:
+    """Read file, embed, store in Qdrant under the given collection."""
+    content = _read_file_safe(file_path)
+    if not content or len(content) < 50:
+        return
+    vector = embed_text(content[:2000])
+    if vector is None:
+        return
+    fact = {
+        "text": content[:500],  # Store truncated preview
+        "memory_type": "document",
+        "project": project,
+        "source_path": file_path,
+        "tags": [os.path.splitext(file_path)[1]],
+    }
+    store_qdrant_memory(fact, vector, collection=collection)
+
+
+def _store_as_memory(content: str, memory_type: str, project: str, source_path: str) -> None:
+    """Summarize content with Haiku and store as memory in Qdrant + Obsidian."""
+    try:
+        import anthropic
+        client = anthropic.Anthropic()
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=256,
+            messages=[{"role": "user", "content": f"用50-200字总结以下内容的要点：\n\n{content[:3000]}"}],
+        )
+        summary = resp.content[0].text.strip()
+    except Exception:
+        summary = content[:200]
+
+    vector = embed_text(summary)
+    if vector:
+        fact = {
+            "text": summary,
+            "memory_type": memory_type,
+            "project": project,
+            "source_path": source_path,
+        }
+        store_qdrant_memory(fact, vector)
+        write_obsidian_entry(project, fact)
+
+
+def process_tool_event(item: dict, db_conn: sqlite3.Connection) -> None:
+    """Process a 'tool_event' queue item (Write/Edit file captured by PostToolUse Hook).
+
+    Classifies the file via router.classify_file and indexes or summarizes it
+    into Qdrant / Obsidian based on the route.
+    """
+    payload = json.loads(item["payload"]) if isinstance(item["payload"], str) else item["payload"]
+    file_path = payload.get("file_path", "")
+    project = item.get("project", "")
+
+    from router import classify_file
+    route = classify_file(file_path)
+
+    if route == "ignore":
+        logger.info("tool_event: ignoring file %s (route=ignore)", file_path)
+        return
+
+    if route == "spec":
+        # Index spec/plan document to Qdrant documents collection
+        _index_text_file(file_path, "documents", project)
+        write_obsidian_milestone(project, f"Document: {os.path.basename(file_path)}")
+
+    elif route == "iterative_report":
+        # Summarize and store as episodic memory
+        content = _read_file_safe(file_path)
+        if content:
+            _store_as_memory(content, "milestone", project, file_path)
+
+    elif route == "paper":
+        # Index to papers collection
+        _index_text_file(file_path, "papers", project)
+
+    elif route == "document":
+        _index_text_file(file_path, "documents", project)
+
+    logger.info("tool_event: processed file %s (route=%s, project=%s)", file_path, route, project)
+
+
+def process_mcp_download(item: dict, db_conn: sqlite3.Connection) -> None:
+    """Process an 'mcp_download' queue item — log download event as a finding."""
+    payload = json.loads(item["payload"]) if isinstance(item["payload"], str) else item["payload"]
+    tool_name = payload.get("tool", "")
+    project = item.get("project", "")
+    response = payload.get("response", {})
+
+    description = f"Downloaded via {tool_name}"
+    if response.get("filename"):
+        description += f": {response['filename']}"
+
+    write_obsidian_entry(project, {
+        "text": description,
+        "memory_type": "finding",
+    })
+    logger.info("mcp_download: logged finding for project=%s tool=%s", project, tool_name)
+
+
 def _dispatch(item: dict, conn: sqlite3.Connection) -> None:
     item_type = item.get("type", "")
     if item_type == "conversation":
         process_conversation(item, conn)
-    elif item_type in ("tool_event", "mcp_download"):
-        pass  # Phase 2 — will be handled by process_tool_event / process_mcp_download
+    elif item_type == "tool_event":
+        process_tool_event(item, conn)
+    elif item_type == "mcp_download":
+        process_mcp_download(item, conn)
     else:
         logger.warning("Unknown queue item type=%s — skipping", item_type)
+
+
+# ---------------------------------------------------------------------------
+# Consolidation
+# ---------------------------------------------------------------------------
+
+MAINTENANCE_INTERVALS = {
+    "consolidate": 86400,  # daily
+    "backfill": 3600,      # hourly
+}
+_last_maintenance: dict[str, float] = {k: 0.0 for k in MAINTENANCE_INTERVALS}
+
+
+def append_pending_rule(project: str, rule_text: str) -> None:
+    """Append a candidate rule to pending_rules.md for user confirmation."""
+    pending_path = Path.home() / "pony" / "ponymemory" / "pending_rules.md"
+    timestamp = time.strftime("%Y-%m-%d %H:%M")
+    entry = f"\n## {timestamp} [{project}]\n{rule_text}\n"
+    with open(pending_path, "a", encoding="utf-8") as f:
+        f.write(entry)
+    logger.info("Pending rule written for project %s", project)
+
+
+def run_consolidation() -> None:
+    """Analyze recent corrections, extract patterns, write to pending_rules.md."""
+    from embedder import search_qdrant, embed_text
+
+    # Search for recent corrections
+    query_vector = embed_text("correction user feedback error fix")
+    if query_vector is None:
+        logger.warning("run_consolidation: embed_text returned None — skipping")
+        return
+
+    results = search_qdrant(query_vector, project=None, top_k=50, collection="session_memories")
+
+    # Filter to corrections only, last 30 days
+    corrections = []
+    cutoff = time.time() - 30 * 86400
+    for r in results:
+        payload = r.get("payload", {})
+        if payload.get("memory_type") == "correction":
+            ts = payload.get("timestamp", "")
+            # Include if timestamp is missing (can't verify age) or within cutoff
+            try:
+                ts_float = float(ts) if ts else 0.0
+            except (ValueError, TypeError):
+                ts_float = 0.0
+            if ts_float == 0.0 or ts_float >= cutoff:
+                corrections.append(payload)
+
+    if not corrections:
+        logger.info("run_consolidation: no recent corrections found")
+        return
+
+    # Group by project
+    by_project: dict[str, list[dict]] = {}
+    for c in corrections:
+        proj = c.get("project", "unknown")
+        by_project.setdefault(proj, []).append(c)
+
+    for project, items in by_project.items():
+        if len(items) < 3:
+            continue
+
+        # Call Haiku to find patterns
+        texts = "\n".join(f"- {item.get('text', '')}" for item in items)
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+            response = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"以下是项目 {project} 的多次纠正记录。"
+                        "分析是否有共性模式，如果有，提炼为一条通用规则（一句话）。"
+                        "如果没有明显共性，回复 NONE。\n\n"
+                        f"{texts}"
+                    ),
+                }],
+            )
+            pattern = response.content[0].text.strip()
+            if pattern and pattern != "NONE":
+                append_pending_rule(project, pattern)
+        except Exception as e:
+            logger.error("Consolidation Haiku call failed: %s", e)
+
+
+def maybe_run_maintenance() -> None:
+    """Run scheduled maintenance tasks when their intervals have elapsed."""
+    now = time.time()
+    for task, interval in MAINTENANCE_INTERVALS.items():
+        if now - _last_maintenance[task] >= interval:
+            _last_maintenance[task] = now
+            if task == "consolidate":
+                run_consolidation()
+            elif task == "backfill":
+                backfill_fallback()
 
 
 # ---------------------------------------------------------------------------
@@ -263,7 +477,7 @@ def main_loop() -> None:
             item = claim_next_item(conn)
             if item is None:
                 time.sleep(1)
-                backfill_fallback()
+                maybe_run_maintenance()
                 continue
 
             item_dict = dict(item)

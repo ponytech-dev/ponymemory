@@ -9,8 +9,8 @@ import pytest
 # Ensure project root is on path so we can import hooks/stop
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-# Import the function under test
-from hooks.stop import read_transcript_incremental
+# Import the functions under test
+from hooks.stop import read_transcript_incremental, has_significant_content
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -112,3 +112,44 @@ def test_read_transcript_incremental_appended():
         # Old lines not re-returned
         assert "first message" not in contents
         assert "first reply" not in contents
+
+
+# ── has_significant_content tests ──────────────────────────────────────────────
+
+def _make_lines_with_text(text: str) -> list[dict]:
+    """Build a minimal transcript line list containing the given text."""
+    return [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {"type": "text", "text": text}
+                ]
+            },
+        }
+    ]
+
+
+def test_has_significant_content_with_keyword():
+    """Returns True when a significance keyword appears in sufficient text."""
+    long_text = "用户纠正了之前的分析结果，需要重新评估。" * 5  # >100 chars, contains 纠正
+    lines = _make_lines_with_text(long_text)
+    assert has_significant_content(lines) is True
+
+
+def test_has_significant_content_no_keyword():
+    """Returns False when text is long enough but contains no significance keyword."""
+    long_text = "这是一段普通的对话内容，没有任何需要记忆的信息。" * 5  # >100 chars, no keywords
+    lines = _make_lines_with_text(long_text)
+    assert has_significant_content(lines) is False
+
+
+def test_has_significant_content_too_short():
+    """Returns False when total text is under 100 characters even with a keyword."""
+    lines = _make_lines_with_text("决定")  # keyword present but too short
+    assert has_significant_content(lines) is False
+
+
+def test_has_significant_content_empty():
+    """Returns False for an empty line list."""
+    assert has_significant_content([]) is False

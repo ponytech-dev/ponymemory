@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """
-PonyMemory Stop Hook (v3 — transcript to SQLite queue)
+PonyMemory Stop Hook (v3 — transcript to SQLite queue + decision:block for memory extraction)
 
 Reads new transcript lines since last run, writes user/assistant messages
 to the SQLite queue for downstream processing. No AI API calls. No additionalContext.
+
+If the conversation has significant content and stop_hook_active is false,
+outputs decision:block to prompt Claude to run memory extraction.
 """
 import hashlib
 import json
@@ -17,6 +20,39 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from db import init_db, write_to_queue, log_exec
 
 DEFAULT_CURSOR_DIR = os.path.expanduser("~/.claude/.ponymemory_cursors")
+
+# Simple heuristics to detect if conversation has memorable content
+SIGNIFICANCE_KEYWORDS = [
+    "决定", "决策", "纠正", "不要", "应该", "禁止", "改为",
+    "完成", "milestone", "发现", "问题", "bug", "修复",
+    "偏好", "preference", "记住", "remember",
+    "设计", "架构", "方案", "计划",
+]
+
+
+def has_significant_content(lines: list[dict]) -> bool:
+    """Check if conversation lines contain content worth memorizing."""
+    if not lines:
+        return False
+
+    total_text = ""
+    for line in lines:
+        msg = line.get("message", {})
+        for block in msg.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                total_text += block.get("text", "") + " "
+
+    # Too short to be meaningful
+    if len(total_text) < 100:
+        return False
+
+    # Check for significance keywords
+    text_lower = total_text.lower()
+    for kw in SIGNIFICANCE_KEYWORDS:
+        if kw in text_lower:
+            return True
+
+    return False
 
 
 def get_project_name() -> str:
@@ -115,6 +151,7 @@ def main() -> None:
     queue_written = 0
     error_msg: Optional[str] = None
 
+    conversation_lines: list[dict] = []
     conn = None
     try:
         conn = init_db()
@@ -122,6 +159,7 @@ def main() -> None:
         if transcript_path:
             new_lines = read_transcript_incremental(transcript_path)
             lines_captured = len(new_lines)
+            conversation_lines = new_lines
 
             for line in new_lines:
                 write_to_queue(
@@ -160,7 +198,25 @@ def main() -> None:
         if conn is not None:
             conn.close()
 
-    print(json.dumps({}))
+    # After queue writing is done, check if we should force Claude to do memory extraction
+    output: dict = {}
+
+    if conversation_lines and not payload.get("stop_hook_active"):
+        if has_significant_content(conversation_lines):
+            output = {
+                "decision": "block",
+                "reason": (
+                    f"记忆检查（项目：{project}）：分析上一轮对话，如有以下内容请调用 store_memory 写入：\n"
+                    "- 用户纠正（correction）\n"
+                    "- 技术决策（decision）\n"
+                    "- 完成里程碑（milestone）\n"
+                    "- 发现问题/事实（finding）\n"
+                    "- 用户偏好（preference）\n"
+                    "格式：50-200字，含 what + why + impact。如无上述内容，直接继续。"
+                ),
+            }
+
+    print(json.dumps(output, ensure_ascii=False))
 
 
 if __name__ == "__main__":

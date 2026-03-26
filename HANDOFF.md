@@ -1,54 +1,40 @@
-# HANDOFF — PonyMemory v2 Queue+Worker 架构
+# HANDOFF — PonyMemory v2 (Plan B: Claude Code Native)
 
 ## 当前状态
 
-**Branch**: `feat/v2-queue-worker`（已 push）
-**Tests**: 71 tests 全部通过
+**Branch**: `feat/v2-queue-worker`
+**Tests**: 75 tests 全部通过
+**架构**: Plan B — 无独立 Worker 进程，无 API Key，无 launchd
+
+## 架构说明
+
+```
+Stop Hook（每轮响应后，代码层）
+  → 读 transcript 增量 → 写 SQLite 队列
+  → 检测有意义内容 → decision:block 强制 Claude 执行 store_memory
+
+SessionStart Hook（每次 session 启动，代码层）
+  → 处理队列中未消费的项（BGE-M3 + Qdrant + Obsidian 直写）
+  → 注入项目 context + 记忆 + 元索引
+
+PostToolUse Hook（文件写入/MCP 下载后，代码层）
+  → 捕获事件 → 写 SQLite 队列
+```
 
 ## 已完成
 
-### Phase 1: Core Foundation
-- [x] `db.py` — SQLite 队列层（14 tests）
-- [x] `hooks/stop.py` v3 — transcript 增量读取 → SQLite 队列（3 tests）
-- [x] `extractor.py` — Haiku 事实提取 + 质量门控（4 tests）
-- [x] `embedder.py` — BGE-M3 embedding + Qdrant 读写（11 tests）
-- [x] `obsidian_writer.py` — Obsidian 直写文件（7 tests）
-- [x] `worker.py` — Worker 主循环 + process_conversation（4 tests）
-- [x] settings.json — 移除 ponymemory hooks 的 timeout 限制
-- [x] anthropic SDK 安装
+- [x] SQLite 队列层（db.py）
+- [x] Stop Hook v4（transcript → queue + decision:block）
+- [x] SessionStart 队列处理 + 动态查询 + 元索引
+- [x] PostToolUse Hook（文件/MCP 事件捕获）
+- [x] BGE-M3 embedder + Qdrant writer
+- [x] Obsidian 直写（无 MCP 依赖）
+- [x] 文件路由引擎
+- [x] 降级链（fallback.jsonl）
+- [x] 巩固机制（corrections → rules）
+- [x] Health endpoint（:47777）
 
-### Phase 2: Tool-Level Capture + Process Management
-- [x] `hooks/post_tool_use.py` — PostToolUse Hook（file event capture，9 tests）
-- [x] `router.py` — 文件分类路由引擎（13 tests）
-- [x] launchd plist — `~/Library/LaunchAgents/com.ponymemory.worker.plist`
-- [x] Degradation chain — fallback.jsonl
-- [x] settings.json — PostToolUse hooks 已添加
+## 剩余
 
-### Phase 3: Read Enhancement
-- [x] `hooks/session_start.py` — dynamic query + priority fix
-
-### Phase 4: Smart Enhancement
-- [x] Daily Consolidation — worker.py `maybe_run_maintenance`
-- [ ] **Task 18: Zotero Integration** ← 唯一未完成项
-
-### Phase 5: Observability
-- [x] `health.py` — HTTP 健康检查端点（localhost:47777/health）
-
-## 唯一剩余任务
-
-### Task 18: Zotero Integration
-- [ ] 安装 pyzotero：`.venv/bin/pip install pyzotero`
-- [ ] 实现 PDF 检测（`~/files/papers/`）→ Pyzotero import → Qdrant 索引
-- [ ] 在 router.py 中添加 Zotero 路由规则
-- [ ] 写测试 + commit
-
-## 关键文件
-
-- Spec: `docs/superpowers/specs/2026-03-25-ponymemory-v2-design.md`
-- Plan: `docs/superpowers/plans/2026-03-25-ponymemory-v2.md`（Task 18 详情在 §Phase 4）
-
-## 重要提醒
-
-- Worker 由 launchd 托管，开机自动启动；手动启停：`launchctl load/unload ~/Library/LaunchAgents/com.ponymemory.worker.plist`
-- 健康检查：`curl localhost:47777/health`
-- Stop Hook v3 已部署；Worker 未运行时队列会积累（无害，重启后自动处理）
+- [ ] Zotero 集成（PDF 管理）
+- [ ] 实际使用验证（新 session 测试 decision:block 触发）

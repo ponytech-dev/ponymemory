@@ -51,9 +51,66 @@ def embed_text(text):
         return None
 
 
+def build_query(project_name):
+    """从 HANDOFF.md 和 task_plan.md 动态构建查询关键词"""
+    keywords = [project_name]
+    cwd = os.environ.get("CWD", os.getcwd())
+
+    # Extract from HANDOFF.md first line
+    handoff = os.path.join(cwd, "HANDOFF.md")
+    if os.path.isfile(handoff):
+        with open(handoff, encoding="utf-8") as f:
+            content = f.read()[:500]
+            first_line = content.split("\n")[0].strip("# ").strip()
+            if first_line:
+                keywords.append(first_line)
+
+    # Extract from task_plan.md Objective
+    task_plan = os.path.join(cwd, "task_plan.md")
+    if os.path.isfile(task_plan):
+        with open(task_plan, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("## Objective"):
+                    obj = next(f, "").strip()
+                    if obj:
+                        keywords.append(obj)
+                    break
+
+    return " ".join(keywords)
+
+
+def get_meta_index():
+    """获取可用记忆工具的元索引，尝试从 Qdrant 获取条目数"""
+    mem_count = "?"
+    paper_count = "?"
+    note_count = "?"
+    try:
+        for collection, var_name in [("session_memories", "mem"), ("papers", "paper"), ("notes", "note")]:
+            req = urllib.request.Request(f"{QDRANT_URL}/collections/{collection}")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                data = json.loads(resp.read())
+                count = data.get("result", {}).get("points_count", "?")
+                if var_name == "mem":
+                    mem_count = count
+                elif var_name == "paper":
+                    paper_count = count
+                elif var_name == "note":
+                    note_count = count
+    except Exception:
+        pass
+
+    return f"""## 可用记忆工具
+- search_memories(query): 过去的工作决策、用户反馈、技术纠正（{mem_count}条）
+  触发场景：用户提到"之前/记得/上次"、设计决策需要一致性、不确定是否被纠正过
+- search_papers(query): 代谢组学/质谱/生信论文（{paper_count} chunks）
+  触发场景：需要引用文献、讨论技术方法
+- search_notes(query): 日常笔记、会议记录（{note_count} chunks）
+"""
+
+
 def search_qdrant_memories(project_name):
     """直接通过 Qdrant HTTP API 搜索相关记忆"""
-    query_text = f"{project_name} recent work decisions corrections"
+    query_text = build_query(project_name)
     vector = embed_text(query_text)
     if not vector:
         return []
@@ -212,37 +269,37 @@ def main():
     project_name = get_project_name()
     context_sections = []
 
-    # 1. Qdrant 记忆搜索（直接 HTTP，不依赖 MCP）
+    # 1. HANDOFF（最高优先级——当前进行中的任务）
+    handoff = read_handoff()
+    if handoff:
+        context_sections.append(handoff)
+
+    # 2. PonyWriterX 活跃项目
+    pwx = read_active_ponywriterx_project()
+    if pwx:
+        context_sections.append(pwx)
+
+    # 3. 待确认规则
+    pending = read_pending_rules()
+    if pending:
+        context_sections.append(pending)
+
+    # 4. 领域经验规则
+    domain_rules = read_domain_rules(project_name)
+    if domain_rules:
+        context_sections.append(domain_rules)
+
+    # 5. Obsidian 项目状态
+    obsidian_context = read_obsidian_project(project_name)
+    if obsidian_context:
+        context_sections.append(f"# L4 Obsidian 项目记忆\n{obsidian_context}")
+
+    # 6. Qdrant 记忆搜索（最低优先级——可截断，直接 HTTP，不依赖 MCP）
     memories = search_qdrant_memories(project_name)
     if memories:
         context_sections.append(
             f"# L3 Qdrant 记忆（{len(memories)} 条相关）\n" + "\n".join(memories)
         )
-
-    # 2. Obsidian 项目状态
-    obsidian_context = read_obsidian_project(project_name)
-    if obsidian_context:
-        context_sections.append(f"# L4 Obsidian 项目记忆\n{obsidian_context}")
-
-    # 3. HANDOFF
-    handoff = read_handoff()
-    if handoff:
-        context_sections.append(handoff)
-
-    # 4. 待确认规则
-    pending = read_pending_rules()
-    if pending:
-        context_sections.append(pending)
-
-    # 5. 领域经验规则
-    domain_rules = read_domain_rules(project_name)
-    if domain_rules:
-        context_sections.append(domain_rules)
-
-    # 6. PonyWriterX 活跃项目
-    pwx = read_active_ponywriterx_project()
-    if pwx:
-        context_sections.append(pwx)
 
     additional_context = "\n\n---\n\n".join(context_sections) if context_sections else ""
 
@@ -256,6 +313,13 @@ def main():
             + "\n\n---\n"
             "提醒：如有 pending_rules，请在首次回复中呈现给用户确认。"
         )
+
+    # 追加元索引（不受 MAX_CONTEXT_CHARS 截断影响，始终存在）
+    meta_index = get_meta_index()
+    if additional_context:
+        additional_context = additional_context + "\n\n" + meta_index
+    else:
+        additional_context = meta_index
 
     output = {}
     if additional_context:

@@ -11,13 +11,141 @@ PonyMemory SessionStart Hook
 import json
 import os
 import sys
+import uuid
+import time
 import urllib.request
 import urllib.error
+
+# Allow importing from project root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db import init_db, claim_next_item, delete_queue_item, mark_failed, reset_stuck_records
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_URL = os.environ.get("EMBED_URL", "http://localhost:8999")
 MEMORY_COLLECTION = "session_memories"
 MAX_CONTEXT_CHARS = 8000
+
+
+VAULT = os.path.expanduser("~/pony/obsidian-vault/")
+
+TYPE_TO_FILE = {
+    "correction": "decisions.md",
+    "decision": "decisions.md",
+    "preference": "decisions.md",
+    "finding": "findings.md",
+    "milestone": "_project.md",
+}
+
+
+def process_pending_queue():
+    """Process pending queue items at session start (code-level, no LLM needed).
+
+    Reads pending conversation lines from SQLite queue, embeds with BGE-M3,
+    stores in Qdrant, writes to Obsidian. Processes up to 20 items to avoid
+    blocking session start too long.
+    """
+    try:
+        conn = init_db()
+    except Exception as e:
+        print(f"[PonyMemory] queue DB init failed: {e}", file=sys.stderr)
+        return 0
+
+    processed = 0
+    max_items = 20  # Don't process too many at session start
+
+    reset_stuck_records(conn, threshold_seconds=120)
+
+    for _ in range(max_items):
+        item = claim_next_item(conn)
+        if item is None:
+            break
+
+        item_dict = dict(item)
+        try:
+            if item_dict["type"] in ("conversation_line", "conversation"):
+                _process_conversation_item(item_dict)
+            # tool_event and mcp_download will be handled by Claude via decision:block
+
+            delete_queue_item(conn, item_dict["id"])
+            processed += 1
+        except Exception as e:
+            print(f"[PonyMemory] queue item {item_dict.get('id')} failed: {e}", file=sys.stderr)
+            mark_failed(conn, item_dict["id"], str(e))
+
+    conn.close()
+    if processed > 0:
+        print(f"[PonyMemory] Processed {processed} pending queue items", file=sys.stderr)
+    return processed
+
+
+def _process_conversation_item(item):
+    """Embed and store a conversation line in Qdrant + Obsidian."""
+    payload = item.get("payload", "{}")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+
+    # Extract text from conversation line(s)
+    text_parts = []
+    entries = payload if isinstance(payload, list) else [payload]
+    for entry in entries:
+        msg = entry.get("message", {})
+        content_blocks = msg.get("content", [])
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                text_parts.append(block)
+
+    text = " ".join(text_parts).strip()
+    if len(text) < 50:
+        return  # Too short to be meaningful
+
+    # Embed with BGE-M3
+    vector = embed_text(text[:2000])  # Truncate for embedding
+    if vector is None:
+        return  # BGE-M3 unavailable, skip silently
+
+    # Store in Qdrant
+    project = item.get("project", "pony")
+    point_id = str(uuid.uuid4())
+    qdrant_payload = {
+        "text": text[:500],  # Store preview
+        "memory_type": "conversation",
+        "project": project,
+        "tags": ["auto-captured"],
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+    body = json.dumps({
+        "points": [{"id": point_id, "vector": vector, "payload": qdrant_payload}]
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            f"{QDRANT_URL}/collections/{MEMORY_COLLECTION}/points",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[PonyMemory] Qdrant write failed: {e}", file=sys.stderr)
+        return
+
+    # Write to Obsidian (append to decisions.md as conversation note)
+    obsidian_dir = os.path.join(VAULT, f"01-Projects/{project}")
+    os.makedirs(obsidian_dir, exist_ok=True)
+    decisions_path = os.path.join(obsidian_dir, "decisions.md")
+    timestamp = time.strftime("%Y-%m-%d %H:%M")
+    entry = f"\n## {timestamp} [conversation]\n\n{text[:300]}\n"
+    try:
+        with open(decisions_path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception as e:
+        print(f"[PonyMemory] Obsidian write failed: {e}", file=sys.stderr)
 
 
 def get_project_name():
@@ -266,6 +394,9 @@ def read_active_ponywriterx_project():
 
 
 def main():
+    # Process any pending queue items from previous sessions
+    queue_processed = process_pending_queue()
+
     project_name = get_project_name()
     context_sections = []
 

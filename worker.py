@@ -21,8 +21,27 @@ from db import (
     store_raw_observation,
 )
 from extractor import format_conversation, extract_facts, filter_by_quality
-from embedder import embed_text, search_qdrant, store_qdrant_memory
+from embedder import embed_text, search_qdrant, store_qdrant_memory, check_qdrant_health
 from obsidian_writer import write_obsidian_entry
+
+# ---------------------------------------------------------------------------
+# Fallback file for when Qdrant is unreachable
+# ---------------------------------------------------------------------------
+
+FALLBACK_FILE = Path.home() / ".claude" / ".ponymemory_fallback.jsonl"
+
+
+def write_fallback(fact: dict, vector: list | None) -> None:
+    """Write fact to fallback JSONL when Qdrant is unreachable."""
+    FALLBACK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    entry = {
+        "fact": fact,
+        "vector": vector,
+        "timestamp": time.time(),
+    }
+    with open(FALLBACK_FILE, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    logger.info("Fact written to fallback file (Qdrant unreachable)")
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -151,8 +170,10 @@ def process_conversation(item: dict, db_conn: sqlite3.Connection) -> None:
             )
             continue
 
-        # c. Store in Qdrant and Obsidian
-        store_qdrant_memory(fact, vector)
+        # c. Store in Qdrant (with fallback) and Obsidian
+        point_id = store_qdrant_memory(fact, vector)
+        if point_id is None:
+            write_fallback(fact, vector)
         write_obsidian_entry(project, fact)
         logger.info(
             "Stored memory: type=%s score=%.2f project=%s",
@@ -166,12 +187,55 @@ def process_conversation(item: dict, db_conn: sqlite3.Connection) -> None:
 # Dispatch table
 # ---------------------------------------------------------------------------
 
+def backfill_fallback() -> None:
+    """Re-import entries from fallback.jsonl into Qdrant if it's back online."""
+    if not FALLBACK_FILE.exists():
+        return
+    if check_qdrant_health() != "ok":
+        return
+
+    entries = []
+    with open(FALLBACK_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+
+    if not entries:
+        return
+
+    logger.info("Backfilling %d entries from fallback file", len(entries))
+    remaining = []
+    for entry in entries:
+        fact = entry.get("fact", {})
+        vector = entry.get("vector")
+        if vector:
+            point_id = store_qdrant_memory(fact, vector)
+            if point_id is None:
+                remaining.append(entry)
+                break  # Qdrant went down again
+        else:
+            remaining.append(entry)
+
+    # Rewrite file with remaining entries (or delete if empty)
+    if remaining:
+        with open(FALLBACK_FILE, "w", encoding="utf-8") as f:
+            for entry in remaining:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    else:
+        FALLBACK_FILE.unlink(missing_ok=True)
+        logger.info("Fallback file cleared — all entries backfilled")
+
+
 def _dispatch(item: dict, conn: sqlite3.Connection) -> None:
     item_type = item.get("type", "")
     if item_type == "conversation":
         process_conversation(item, conn)
     elif item_type in ("tool_event", "mcp_download"):
-        pass  # Phase 2
+        pass  # Phase 2 — will be handled by process_tool_event / process_mcp_download
     else:
         logger.warning("Unknown queue item type=%s — skipping", item_type)
 
@@ -199,6 +263,7 @@ def main_loop() -> None:
             item = claim_next_item(conn)
             if item is None:
                 time.sleep(1)
+                backfill_fallback()
                 continue
 
             item_dict = dict(item)

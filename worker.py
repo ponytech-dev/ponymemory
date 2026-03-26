@@ -22,6 +22,7 @@ from db import (
 )
 from extractor import format_conversation, extract_facts, filter_by_quality
 from embedder import embed_text, search_qdrant, store_qdrant_memory, check_qdrant_health
+from health import start_health_server
 from obsidian_writer import write_obsidian_entry, write_obsidian_milestone
 
 # ---------------------------------------------------------------------------
@@ -464,6 +465,8 @@ def main_loop() -> None:
 
     conn = init_db()
     write_pid_file()
+    start_health_server()
+    logger.info("Health server started on port 47777")
 
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)

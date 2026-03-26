@@ -233,6 +233,8 @@ def get_meta_index():
 - search_papers(query): 代谢组学/质谱/生信论文（{paper_count} chunks）
   触发场景：需要引用文献、讨论技术方法
 - search_notes(query): 日常笔记、会议记录（{note_count} chunks）
+- zotero_search_items(query): Zotero 文献库搜索（需要 Zotero 运行）
+  触发场景：查找已管理的参考文献、获取论文元数据或全文
 """
 
 

@@ -11,13 +11,141 @@ PonyMemory SessionStart Hook
 import json
 import os
 import sys
+import uuid
+import time
 import urllib.request
 import urllib.error
+
+# Allow importing from project root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from db import init_db, claim_next_item, delete_queue_item, mark_failed, reset_stuck_records
 
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://localhost:6333")
 EMBED_URL = os.environ.get("EMBED_URL", "http://localhost:8999")
 MEMORY_COLLECTION = "session_memories"
 MAX_CONTEXT_CHARS = 8000
+
+
+VAULT = os.path.expanduser("~/pony/obsidian-vault/")
+
+TYPE_TO_FILE = {
+    "correction": "decisions.md",
+    "decision": "decisions.md",
+    "preference": "decisions.md",
+    "finding": "findings.md",
+    "milestone": "_project.md",
+}
+
+
+def process_pending_queue():
+    """Process pending queue items at session start (code-level, no LLM needed).
+
+    Reads pending conversation lines from SQLite queue, embeds with BGE-M3,
+    stores in Qdrant, writes to Obsidian. Processes up to 20 items to avoid
+    blocking session start too long.
+    """
+    try:
+        conn = init_db()
+    except Exception as e:
+        print(f"[PonyMemory] queue DB init failed: {e}", file=sys.stderr)
+        return 0
+
+    processed = 0
+    max_items = 20  # Don't process too many at session start
+
+    reset_stuck_records(conn, threshold_seconds=120)
+
+    for _ in range(max_items):
+        item = claim_next_item(conn)
+        if item is None:
+            break
+
+        item_dict = dict(item)
+        try:
+            if item_dict["type"] in ("conversation_line", "conversation"):
+                _process_conversation_item(item_dict)
+            # tool_event and mcp_download will be handled by Claude via decision:block
+
+            delete_queue_item(conn, item_dict["id"])
+            processed += 1
+        except Exception as e:
+            print(f"[PonyMemory] queue item {item_dict.get('id')} failed: {e}", file=sys.stderr)
+            mark_failed(conn, item_dict["id"], str(e))
+
+    conn.close()
+    if processed > 0:
+        print(f"[PonyMemory] Processed {processed} pending queue items", file=sys.stderr)
+    return processed
+
+
+def _process_conversation_item(item):
+    """Embed and store a conversation line in Qdrant + Obsidian."""
+    payload = item.get("payload", "{}")
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return
+
+    # Extract text from conversation line(s)
+    text_parts = []
+    entries = payload if isinstance(payload, list) else [payload]
+    for entry in entries:
+        msg = entry.get("message", {})
+        content_blocks = msg.get("content", [])
+        for block in content_blocks:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text_parts.append(block.get("text", ""))
+            elif isinstance(block, str):
+                text_parts.append(block)
+
+    text = " ".join(text_parts).strip()
+    if len(text) < 50:
+        return  # Too short to be meaningful
+
+    # Embed with BGE-M3
+    vector = embed_text(text[:2000])  # Truncate for embedding
+    if vector is None:
+        return  # BGE-M3 unavailable, skip silently
+
+    # Store in Qdrant
+    project = item.get("project", "pony")
+    point_id = str(uuid.uuid4())
+    qdrant_payload = {
+        "text": text[:500],  # Store preview
+        "memory_type": "conversation",
+        "project": project,
+        "tags": ["auto-captured"],
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+    body = json.dumps({
+        "points": [{"id": point_id, "vector": vector, "payload": qdrant_payload}]
+    }).encode("utf-8")
+
+    try:
+        req = urllib.request.Request(
+            f"{QDRANT_URL}/collections/{MEMORY_COLLECTION}/points",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="PUT",
+        )
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"[PonyMemory] Qdrant write failed: {e}", file=sys.stderr)
+        return
+
+    # Write to Obsidian (append to decisions.md as conversation note)
+    obsidian_dir = os.path.join(VAULT, f"01-Projects/{project}")
+    os.makedirs(obsidian_dir, exist_ok=True)
+    decisions_path = os.path.join(obsidian_dir, "decisions.md")
+    timestamp = time.strftime("%Y-%m-%d %H:%M")
+    entry = f"\n## {timestamp} [conversation]\n\n{text[:300]}\n"
+    try:
+        with open(decisions_path, "a", encoding="utf-8") as f:
+            f.write(entry)
+    except Exception as e:
+        print(f"[PonyMemory] Obsidian write failed: {e}", file=sys.stderr)
 
 
 def get_project_name():
@@ -51,9 +179,68 @@ def embed_text(text):
         return None
 
 
+def build_query(project_name):
+    """从 HANDOFF.md 和 task_plan.md 动态构建查询关键词"""
+    keywords = [project_name]
+    cwd = os.environ.get("CWD", os.getcwd())
+
+    # Extract from HANDOFF.md first line
+    handoff = os.path.join(cwd, "HANDOFF.md")
+    if os.path.isfile(handoff):
+        with open(handoff, encoding="utf-8") as f:
+            content = f.read()[:500]
+            first_line = content.split("\n")[0].strip("# ").strip()
+            if first_line:
+                keywords.append(first_line)
+
+    # Extract from task_plan.md Objective
+    task_plan = os.path.join(cwd, "task_plan.md")
+    if os.path.isfile(task_plan):
+        with open(task_plan, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("## Objective"):
+                    obj = next(f, "").strip()
+                    if obj:
+                        keywords.append(obj)
+                    break
+
+    return " ".join(keywords)
+
+
+def get_meta_index():
+    """获取可用记忆工具的元索引，尝试从 Qdrant 获取条目数"""
+    mem_count = "?"
+    paper_count = "?"
+    note_count = "?"
+    try:
+        for collection, var_name in [("session_memories", "mem"), ("papers", "paper"), ("notes", "note")]:
+            req = urllib.request.Request(f"{QDRANT_URL}/collections/{collection}")
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                data = json.loads(resp.read())
+                count = data.get("result", {}).get("points_count", "?")
+                if var_name == "mem":
+                    mem_count = count
+                elif var_name == "paper":
+                    paper_count = count
+                elif var_name == "note":
+                    note_count = count
+    except Exception:
+        pass
+
+    return f"""## 可用记忆工具
+- search_memories(query): 过去的工作决策、用户反馈、技术纠正（{mem_count}条）
+  触发场景：用户提到"之前/记得/上次"、设计决策需要一致性、不确定是否被纠正过
+- search_papers(query): 代谢组学/质谱/生信论文（{paper_count} chunks）
+  触发场景：需要引用文献、讨论技术方法
+- search_notes(query): 日常笔记、会议记录（{note_count} chunks）
+- zotero_search_items(query): Zotero 文献库搜索（需要 Zotero 运行）
+  触发场景：查找已管理的参考文献、获取论文元数据或全文
+"""
+
+
 def search_qdrant_memories(project_name):
     """直接通过 Qdrant HTTP API 搜索相关记忆"""
-    query_text = f"{project_name} recent work decisions corrections"
+    query_text = build_query(project_name)
     vector = embed_text(query_text)
     if not vector:
         return []
@@ -209,40 +396,43 @@ def read_active_ponywriterx_project():
 
 
 def main():
+    # Process any pending queue items from previous sessions
+    queue_processed = process_pending_queue()
+
     project_name = get_project_name()
     context_sections = []
 
-    # 1. Qdrant 记忆搜索（直接 HTTP，不依赖 MCP）
+    # 1. HANDOFF（最高优先级——当前进行中的任务）
+    handoff = read_handoff()
+    if handoff:
+        context_sections.append(handoff)
+
+    # 2. PonyWriterX 活跃项目
+    pwx = read_active_ponywriterx_project()
+    if pwx:
+        context_sections.append(pwx)
+
+    # 3. 待确认规则
+    pending = read_pending_rules()
+    if pending:
+        context_sections.append(pending)
+
+    # 4. 领域经验规则
+    domain_rules = read_domain_rules(project_name)
+    if domain_rules:
+        context_sections.append(domain_rules)
+
+    # 5. Obsidian 项目状态
+    obsidian_context = read_obsidian_project(project_name)
+    if obsidian_context:
+        context_sections.append(f"# L4 Obsidian 项目记忆\n{obsidian_context}")
+
+    # 6. Qdrant 记忆搜索（最低优先级——可截断，直接 HTTP，不依赖 MCP）
     memories = search_qdrant_memories(project_name)
     if memories:
         context_sections.append(
             f"# L3 Qdrant 记忆（{len(memories)} 条相关）\n" + "\n".join(memories)
         )
-
-    # 2. Obsidian 项目状态
-    obsidian_context = read_obsidian_project(project_name)
-    if obsidian_context:
-        context_sections.append(f"# L4 Obsidian 项目记忆\n{obsidian_context}")
-
-    # 3. HANDOFF
-    handoff = read_handoff()
-    if handoff:
-        context_sections.append(handoff)
-
-    # 4. 待确认规则
-    pending = read_pending_rules()
-    if pending:
-        context_sections.append(pending)
-
-    # 5. 领域经验规则
-    domain_rules = read_domain_rules(project_name)
-    if domain_rules:
-        context_sections.append(domain_rules)
-
-    # 6. PonyWriterX 活跃项目
-    pwx = read_active_ponywriterx_project()
-    if pwx:
-        context_sections.append(pwx)
 
     additional_context = "\n\n---\n\n".join(context_sections) if context_sections else ""
 
@@ -256,6 +446,13 @@ def main():
             + "\n\n---\n"
             "提醒：如有 pending_rules，请在首次回复中呈现给用户确认。"
         )
+
+    # 追加元索引（不受 MAX_CONTEXT_CHARS 截断影响，始终存在）
+    meta_index = get_meta_index()
+    if additional_context:
+        additional_context = additional_context + "\n\n" + meta_index
+    else:
+        additional_context = meta_index
 
     output = {}
     if additional_context:

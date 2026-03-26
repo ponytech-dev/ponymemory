@@ -3,11 +3,11 @@
 ## 当前状态
 
 **Branch**: `feat/v2-queue-worker`（已 push）
-**Phase 1 完成**：43 tests 全部通过，8 commits
+**Tests**: 71 tests 全部通过
 
 ## 已完成
 
-### Phase 1: Core Foundation (Task 1-9)
+### Phase 1: Core Foundation
 - [x] `db.py` — SQLite 队列层（14 tests）
 - [x] `hooks/stop.py` v3 — transcript 增量读取 → SQLite 队列（3 tests）
 - [x] `extractor.py` — Haiku 事实提取 + 质量门控（4 tests）
@@ -17,26 +17,38 @@
 - [x] settings.json — 移除 ponymemory hooks 的 timeout 限制
 - [x] anthropic SDK 安装
 
-## 下一步
+### Phase 2: Tool-Level Capture + Process Management
+- [x] `hooks/post_tool_use.py` — PostToolUse Hook（file event capture，9 tests）
+- [x] `router.py` — 文件分类路由引擎（13 tests）
+- [x] launchd plist — `~/Library/LaunchAgents/com.ponymemory.worker.plist`
+- [x] Degradation chain — fallback.jsonl
+- [x] settings.json — PostToolUse hooks 已添加
 
-### Phase 2: Tool-Level Capture + Process Management (Task 10-15)
-- [ ] Task 10: PostToolUse Hook (`hooks/post_tool_use.py`)
-- [ ] Task 11: File Router (`router.py`)
-- [ ] Task 12: launchd plist 配置
-- [ ] Task 13: Degradation chain (fallback.jsonl)
-- [ ] Task 14: settings.json 添加 PostToolUse hooks
-- [ ] Task 15: Phase 2 验证 + push
+### Phase 3: Read Enhancement
+- [x] `hooks/session_start.py` — dynamic query + priority fix
 
-### Phase 3-5 见 Plan 文档
+### Phase 4: Smart Enhancement
+- [x] Daily Consolidation — worker.py `maybe_run_maintenance`
+- [ ] **Task 18: Zotero Integration** ← 唯一未完成项
+
+### Phase 5: Observability
+- [x] `health.py` — HTTP 健康检查端点（localhost:47777/health）
+
+## 唯一剩余任务
+
+### Task 18: Zotero Integration
+- [ ] 安装 pyzotero：`.venv/bin/pip install pyzotero`
+- [ ] 实现 PDF 检测（`~/files/papers/`）→ Pyzotero import → Qdrant 索引
+- [ ] 在 router.py 中添加 Zotero 路由规则
+- [ ] 写测试 + commit
 
 ## 关键文件
 
 - Spec: `docs/superpowers/specs/2026-03-25-ponymemory-v2-design.md`
-- Plan: `docs/superpowers/plans/2026-03-25-ponymemory-v2.md`
-- 新模块: db.py, worker.py, extractor.py, embedder.py, obsidian_writer.py
+- Plan: `docs/superpowers/plans/2026-03-25-ponymemory-v2.md`（Task 18 详情在 §Phase 4）
 
 ## 重要提醒
 
-- Worker 还未启动为常驻进程（Phase 2 Task 12）
-- Stop Hook v3 已部署但 Worker 未运行时，队列会累积（无害）
-- 执行方式: subagent-driven-development，每 task 一个 subagent
+- Worker 由 launchd 托管，开机自动启动；手动启停：`launchctl load/unload ~/Library/LaunchAgents/com.ponymemory.worker.plist`
+- 健康检查：`curl localhost:47777/health`
+- Stop Hook v3 已部署；Worker 未运行时队列会积累（无害，重启后自动处理）
